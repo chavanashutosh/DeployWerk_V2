@@ -4,6 +4,8 @@ Rust **API** (`deploywerk-api`), **CLI** (`deploywerk-cli`), and **Vite + React*
 
 **This file is the only operator documentation in the repository.** Older spec/status markdown was removed; use `git log` / history if you need prior `docs/` content.
 
+**Canonical source:** https://github.com/chavanashutosh/DeployWerk_V2
+
 ---
 
 ## Where to put the code (Debian 13 production)
@@ -21,14 +23,15 @@ Rust **API** (`deploywerk-api`), **CLI** (`deploywerk-cli`), and **Vite + React*
 
 **How to upload the tree**
 
-1. **Git (preferred):** On the server, `sudo mkdir -p /opt/deploywerk && sudo chown $USER:$USER /opt/deploywerk`, then clone your private remote (e.g. Forgejo on port `3000`, Git over SSH on host port `2222`):
+1. **Git (preferred):** On the server, `sudo mkdir -p /opt/deploywerk && sudo chown $USER:$USER /opt/deploywerk`, then clone this repository (HTTPS or SSH):
 
    ```bash
    cd /opt
-   git clone git@git.example.com:you/deploywerk.git deploywerk
+   git clone https://github.com/chavanashutosh/DeployWerk_V2.git deploywerk
+   # or SSH: git clone git@github.com:chavanashutosh/DeployWerk_V2.git deploywerk
    ```
 
-   Use SSH keys; never store passwords in the remote URL.
+   Use SSH keys for the SSH URL; never store passwords in the remote URL. For a private fork or self-hosted mirror, use that remote instead.
 
 2. **rsync / scp:** From your workstation, sync the repo to `/opt/deploywerk/` excluding `target/`, `node_modules/`, `.env`.
 

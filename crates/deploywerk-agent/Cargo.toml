@@ -3,6 +3,8 @@ name = "deploywerk-agent"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
+homepage.workspace = true
 description = "DeployWerk host agent (heartbeat)"
 
 [[bin]]
