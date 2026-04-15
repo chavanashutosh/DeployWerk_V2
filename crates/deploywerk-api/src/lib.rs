@@ -29,8 +29,10 @@ mod team_platform;
 mod team_secrets;
 mod webhook_github;
 mod handlers;
+mod integrations;
 
 pub use applications::{execute_deploy_job, try_claim_next_queued_deploy_job};
+pub use config::IntegrationUrls;
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -75,6 +77,16 @@ pub struct AppState {
     /// Public web origin for invite links in email, e.g. `https://app.example.com`.
     pub public_app_url: Option<String>,
     pub admin_action_emails_enabled: bool,
+    /// True when `DEPLOYWERK_LOCAL_SERVICE_DEFAULTS` applied localhost preset URLs.
+    pub local_service_defaults: bool,
+    /// Operator integration links (bootstrap); no secrets.
+    pub integration_urls: IntegrationUrls,
+    /// Optional docs base for SSO section link (`{base}/README.md#single-sign-on-oidc`).
+    pub documentation_base_url: Option<String>,
+    /// Technitium DNS API (optional automation).
+    pub technitium_integration: Option<integrations::TechnitiumIntegration>,
+    /// Portainer API read-only probe.
+    pub portainer_integration: Option<integrations::PortainerIntegration>,
 }
 
 /// Run migrations, optional seed, then the HTTP server (used by `deploywerk-api` binary).
@@ -175,6 +187,42 @@ pub async fn run() -> anyhow::Result<()> {
 
     let deploy_dispatch_inline = config.deploy_dispatch_inline;
 
+    let technitium_integration = if config.technitium_dns_enabled {
+        match (
+            config.technitium_api_url.clone(),
+            config.technitium_api_token.clone(),
+        ) {
+            (Some(api_url), Some(api_token)) => Some(integrations::TechnitiumIntegration { api_url, api_token }),
+            _ => {
+                tracing::warn!(
+                    "DEPLOYWERK_TECHNITIUM_DNS_ENABLED but DEPLOYWERK_TECHNITIUM_API_URL or DEPLOYWERK_TECHNITIUM_API_TOKEN missing"
+                );
+                None
+            }
+        }
+    } else {
+        None
+    };
+
+    let portainer_api_url = config
+        .portainer_api_url
+        .clone()
+        .or_else(|| config.integration_urls.portainer_url.clone());
+
+    let portainer_integration = if config.portainer_integration_enabled {
+        match (portainer_api_url, config.portainer_api_token.clone()) {
+            (Some(api_url), Some(api_token)) => Some(integrations::PortainerIntegration { api_url, api_token }),
+            _ => {
+                tracing::warn!(
+                    "DEPLOYWERK_PORTAINER_INTEGRATION_ENABLED but DEPLOYWERK_PORTAINER_API_URL (or INTEGRATION_PORTAINER_URL) and DEPLOYWERK_PORTAINER_API_TOKEN required"
+                );
+                None
+            }
+        }
+    } else {
+        None
+    };
+
     if let (Some(app_id), Some(ref pem)) = (config.github_app_id, config.github_app_private_key_pem.as_ref())
     {
         match github_app_api::encode_github_app_jwt(app_id, pem) {
@@ -211,6 +259,11 @@ pub async fn run() -> anyhow::Result<()> {
         smtp_settings: config.smtp_settings.clone(),
         public_app_url: config.public_app_url.clone(),
         admin_action_emails_enabled: config.admin_action_emails_enabled,
+        local_service_defaults: config.local_service_defaults,
+        integration_urls: config.integration_urls.clone(),
+        documentation_base_url: config.documentation_base_url.clone(),
+        technitium_integration,
+        portainer_integration,
     });
 
     if !deploy_dispatch_inline {

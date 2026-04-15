@@ -1,0 +1,92 @@
+# Traefik v3 — dynamic configuration fragment (FILE provider)
+#
+# Mount this file from Traefik static config, for example:
+#   --providers.file.filename=/etc/traefik/dynamic/orbytals.yml
+# or directory:
+#   --providers.file.directory=/etc/traefik/dynamic
+#
+# Prerequisites (static Traefik config):
+# - entryPoints named `web` (80) and `websecure` (443)
+# - certificatesResolvers.le (ACME) if you use tls.certResolver: le
+#
+# Replace placeholders:
+# - DEPLOYWERK_UPSTREAM: host gateway to nginx on loopback, e.g. http://172.17.0.1:8085
+#   (find gateway: docker run --rm alpine ip route | awk '/default/ {print $3}')
+# - SYNAPSE_UPSTREAM: Synapse HTTP from Traefik’s network, e.g. http://synapse:8008
+#   (use the compose service name + internal port; must be on a network Traefik joins)
+
+http:
+  routers:
+    # --- Optional: redirect www → apex (raise priority if you use this) ---
+    orbytals-www-redirect:
+      rule: Host(`www.orbytals.com`)
+      entryPoints:
+        - websecure
+      middlewares:
+        - orbytals-www-to-apex
+      tls:
+        certResolver: le
+      service: noop@internal
+
+    # --- Matrix delegation on apex (must beat generic host router) ---
+    orbytals-matrix-wellknown:
+      rule: Host(`orbytals.com`) && PathPrefix(`/.well-known/matrix`)
+      entryPoints:
+        - websecure
+      priority: 100
+      tls:
+        certResolver: le
+      service: orbytals-synapse-http
+
+    # --- DeployWerk: API + SPA via host nginx (loopback :8085) ---
+    orbytals-deploywerk:
+      rule: Host(`orbytals.com`)
+      entryPoints:
+        - websecure
+      priority: 10
+      tls:
+        certResolver: le
+      service: orbytals-deploywerk-nginx
+
+    # HTTP → HTTPS (adjust to match your static Traefik entrypoints)
+    orbytals-web-to-secure:
+      rule: Host(`orbytals.com`) || Host(`www.orbytals.com`)
+      entryPoints:
+        - web
+      middlewares:
+        - redirect-web-to-websecure
+      service: noop@internal
+
+  middlewares:
+    orbytals-www-to-apex:
+      redirectRegex:
+        regex: "^https://www\\.orbytals\\.com/(.*)"
+        replacement: "https://orbytals.com/${1}"
+        permanent: true
+
+    redirect-web-to-websecure:
+      redirectScheme:
+        scheme: https
+        permanent: true
+
+  services:
+    # Synapse client API / well-known — Synapse serves /.well-known under its listener
+    orbytals-synapse-http:
+      loadBalancer:
+        servers:
+          - url: "http://synapse:8008"
+
+    # Host nginx: /api → deploywerk-api, / → SPA
+    orbytals-deploywerk-nginx:
+      loadBalancer:
+        servers:
+          - url: "http://172.17.0.1:8085"
+
+# Notes:
+# - If Synapse is not on the apex, remove router orbytals-matrix-wellknown and rely on
+#   orbytals-deploywerk only.
+# - noop@internal: built-in Traefik empty service; used only with redirect middlewares.
+#   If noop@internal is unavailable in your version, use a tiny redirect-only router without a backend
+#   or consult Traefik docs for your release.
+# - Ensure firewall allows Traefik → host:8085 if you bind nginx to 127.0.0.1 only (Docker bridge
+#   to host should still reach 172.17.0.1:8085 on Linux).

@@ -115,6 +115,26 @@ async fn version() -> Json<serde_json::Value> {
 }
 
 #[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PlatformIntegrationsBootstrap {
+    /// True when `DEPLOYWERK_LOCAL_SERVICE_DEFAULTS` is enabled.
+    #[serde(default)]
+    local_service_defaults: bool,
+    forgejo_url: Option<String>,
+    mailcow_url: Option<String>,
+    portainer_url: Option<String>,
+    technitium_url: Option<String>,
+    matrix_client_url: Option<String>,
+    traefik_dashboard_url: Option<String>,
+    /// In-app SSO guide or external docs URL.
+    sso_playbook_url: Option<String>,
+    #[serde(default)]
+    technitium_dns_automation_configured: bool,
+    #[serde(default)]
+    portainer_health_probe_configured: bool,
+}
+
+#[derive(Serialize)]
 struct BootstrapResponse {
     demo_logins_enabled: bool,
     allow_local_password_auth: bool,
@@ -135,6 +155,12 @@ struct BootstrapResponse {
     mail_smtp_configured: bool,
     #[serde(default)]
     public_app_url_configured: bool,
+    /// Public UI origin when set (`DEPLOYWERK_PUBLIC_APP_URL`) — for webhook URL hints.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    public_app_url: Option<String>,
+    /// Operator links to Git, mail, Portainer, DNS, Matrix, Traefik (`DEPLOYWERK_INTEGRATION_*`).
+    #[serde(default)]
+    platform_integrations: PlatformIntegrationsBootstrap,
 }
 
 #[derive(Serialize)]
@@ -183,6 +209,13 @@ async fn bootstrap(State(state): State<Arc<AppState>>) -> Result<Json<BootstrapR
         None
     };
 
+    let u = &state.integration_urls;
+    let sso_playbook_url = state
+        .documentation_base_url
+        .as_ref()
+        .map(|b| format!("{}/README.md#single-sign-on-oidc", b.trim_end_matches('/')))
+        .or_else(|| Some("/app/sso-setup".to_string()));
+
     Ok(Json(BootstrapResponse {
         demo_logins_enabled: enabled,
         allow_local_password_auth: state.allow_local_password_auth,
@@ -194,6 +227,19 @@ async fn bootstrap(State(state): State<Arc<AppState>>) -> Result<Json<BootstrapR
         demo_accounts: accounts,
         mail_smtp_configured: state.smtp_settings.is_some(),
         public_app_url_configured: state.public_app_url.is_some(),
+        public_app_url: state.public_app_url.clone(),
+        platform_integrations: PlatformIntegrationsBootstrap {
+            local_service_defaults: state.local_service_defaults,
+            forgejo_url: u.forgejo_url.clone(),
+            mailcow_url: u.mailcow_url.clone(),
+            portainer_url: u.portainer_url.clone(),
+            technitium_url: u.technitium_url.clone(),
+            matrix_client_url: u.matrix_client_url.clone(),
+            traefik_dashboard_url: u.traefik_dashboard_url.clone(),
+            sso_playbook_url,
+            technitium_dns_automation_configured: state.technitium_integration.is_some(),
+            portainer_health_probe_configured: state.portainer_integration.is_some(),
+        },
     }))
 }
 
@@ -2150,5 +2196,28 @@ async fn accept_invitation(
     tx.commit().await.map_err(|_| ApiError::Internal)?;
 
     Ok(StatusCode::NO_CONTENT)
+}
+
+#[cfg(test)]
+mod bootstrap_tests {
+    use super::PlatformIntegrationsBootstrap;
+
+    #[test]
+    fn platform_integrations_serializes_camel_case() {
+        let p = PlatformIntegrationsBootstrap {
+            local_service_defaults: false,
+            forgejo_url: Some("https://git.example.com".into()),
+            mailcow_url: None,
+            portainer_url: None,
+            technitium_url: None,
+            matrix_client_url: None,
+            traefik_dashboard_url: None,
+            sso_playbook_url: Some("/app/sso-setup".into()),
+            technitium_dns_automation_configured: false,
+            portainer_health_probe_configured: false,
+        };
+        let v = serde_json::to_value(&p).expect("serialize");
+        assert_eq!(v.get("forgejoUrl").and_then(|x| x.as_str()), Some("https://git.example.com"));
+    }
 }
 

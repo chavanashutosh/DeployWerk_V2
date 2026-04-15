@@ -98,7 +98,7 @@ export function MailDomainsSettingsPage() {
       <PageHeader
         icon={<Mail className="h-6 w-6" strokeWidth={1.75} />}
         title="Mail domains"
-        description="Register domains for the team mail platform (Phase 1). DNS validation is a stub; follow spec/08 for required records."
+        description="Register domains for the team mail platform (Phase 1). DNS validation is a stub; follow README.md (Mail) for required records."
       />
       <InlineError message={err} />
       <form onSubmit={onAdd} className="flex flex-wrap items-end gap-2">

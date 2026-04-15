@@ -152,7 +152,7 @@ async fn delete_mail_domain(
     Ok(StatusCode::NO_CONTENT)
 }
 
-/// Placeholder until live DNS validation (spec/08 wizard).
+/// Placeholder until live DNS validation (see repository README, Mail section).
 async fn mail_domain_dns_stub(
     State(state): State<Arc<AppState>>,
     Path((team_id, domain_id)): Path<(Uuid, Uuid)>,
@@ -174,7 +174,7 @@ async fn mail_domain_dns_stub(
 
     Ok(Json(serde_json::json!({
         "domain": domain,
-        "mx": { "status": "not_checked", "note": "Live DNS lookups are not implemented yet; use your DNS provider to set records per spec/08." },
+        "mx": { "status": "not_checked", "note": "Live DNS lookups are not implemented yet; use your DNS provider to set records per README Mail section." },
         "spf": { "status": "not_checked" },
         "dkim": { "status": "not_checked" },
         "dmarc": { "status": "not_checked" },

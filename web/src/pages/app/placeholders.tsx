@@ -22,6 +22,7 @@ import {
 } from "@/api";
 import { NotificationEndpointsPanel } from "@/components/team/NotificationEndpointsPanel";
 import { InlineError, PageHeader } from "@/components/ui";
+import { PlatformIntegrationsPanel } from "@/components/platform/PlatformIntegrationsPanel";
 import { Panel, useTeamId } from "./platform/_shared";
 
 export { AnalyticsPageApp, SpeedInsightsPageApp } from "./platform/analytics-pages";
@@ -573,11 +574,12 @@ export function IntegrationsPageApp() {
         title="Integrations"
         description={
           <>
-            Outbound webhooks for deploy lifecycle events. Configure endpoints under{" "}
-            <strong>Settings → Notifications</strong>.
+            Platform service links (Git, mail, Portainer, DNS, Matrix, Traefik), SSO hints, and outbound webhooks for
+            deploy events. Configure notification endpoints under <strong>Settings → Notifications</strong>.
           </>
         }
       />
+      <PlatformIntegrationsPanel teamId={teamId} />
       <NotificationEndpointsPanel teamId={teamId} />
     </div>
   );

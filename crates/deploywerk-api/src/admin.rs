@@ -12,6 +12,7 @@ use uuid::Uuid;
 
 use crate::auth::require_principal;
 use crate::error::ApiError;
+use crate::integrations;
 use crate::mail;
 use crate::AppState;
 
@@ -47,6 +48,14 @@ pub fn routes() -> Router<Arc<AppState>> {
         .route("/api/v1/admin/analytics/overview", get(analytics_overview))
         .route("/api/v1/admin/system", get(admin_system))
         .route("/api/v1/admin/audit-log", get(list_audit_log))
+        .route(
+            "/api/v1/admin/integrations/portainer/health",
+            get(admin_portainer_health),
+        )
+        .route(
+            "/api/v1/admin/integrations/technitium/status",
+            get(admin_technitium_status),
+        )
 }
 
 #[derive(Deserialize)]
@@ -1375,6 +1384,71 @@ async fn admin_system(
     Ok(Json(serde_json::json!({
         "database_ok": db_ok,
         "git_sha": git_sha,
+    })))
+}
+
+// --- Optional operator integrations (Portainer / Technitium) ---
+
+async fn admin_portainer_health(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let actor = require_platform_admin(&state, &headers).await?;
+    let Some(ref p) = state.portainer_integration else {
+        return Err(ApiError::NotFound);
+    };
+    match integrations::portainer_system_status(p).await {
+        Ok(json) => {
+            let _ = log_admin_audit(
+                &state.pool,
+                actor,
+                "integrations.portainer.health",
+                "integration",
+                None,
+                serde_json::json!({ "ok": true }),
+            )
+            .await;
+            Ok(Json(serde_json::json!({
+                "ok": true,
+                "portainer": json,
+            })))
+        }
+        Err(e) => {
+            let _ = log_admin_audit(
+                &state.pool,
+                actor,
+                "integrations.portainer.health",
+                "integration",
+                None,
+                serde_json::json!({ "ok": false, "error": e }),
+            )
+            .await;
+            Err(ApiError::BadRequest(e.into()))
+        }
+    }
+}
+
+async fn admin_technitium_status(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let actor = require_platform_admin(&state, &headers).await?;
+    if state.technitium_integration.is_none() {
+        return Err(ApiError::NotFound);
+    }
+    let _ = log_admin_audit(
+        &state.pool,
+        actor,
+        "integrations.technitium.status",
+        "integration",
+        None,
+        serde_json::json!({ "ok": true }),
+    )
+    .await;
+    Ok(Json(serde_json::json!({
+        "ok": true,
+        "configured": true,
+        "note": "DNS record automation is not implemented; API credentials are loaded for future use.",
     })))
 }
 

@@ -6,6 +6,56 @@ use sha2::{Digest, Sha256};
 
 use crate::mail;
 
+/// Public base URLs for operator integrations (Git, mail admin, Portainer, DNS UI, Matrix client, Traefik).
+/// Set via `DEPLOYWERK_INTEGRATION_*` env vars; exposed in `GET /api/v1/bootstrap` (no secrets).
+#[derive(Clone, Default, Debug)]
+pub struct IntegrationUrls {
+    pub forgejo_url: Option<String>,
+    pub mailcow_url: Option<String>,
+    pub portainer_url: Option<String>,
+    pub technitium_url: Option<String>,
+    pub matrix_client_url: Option<String>,
+    pub traefik_dashboard_url: Option<String>,
+}
+
+fn optional_integration_url(var: &str) -> Option<String> {
+    env::var(var)
+        .ok()
+        .map(|s| s.trim().trim_end_matches('/').to_string())
+        .filter(|s| !s.is_empty())
+}
+
+/// Fills unset [`IntegrationUrls`] when `DEPLOYWERK_LOCAL_SERVICE_DEFAULTS` is enabled.
+///
+/// Defaults match common **published ports** when Traefik, Portainer, Forgejo, Technitium, and Mailcow
+/// run on the same host as DeployWerk. Explicit `DEPLOYWERK_INTEGRATION_*` values always win.
+///
+/// | Slot | Default |
+/// |------|---------|
+/// | Traefik dashboard | `http://127.0.0.1:8080` |
+/// | Portainer | `https://127.0.0.1:9443` (self-signed TLS; browser may warn) |
+/// | Forgejo | `http://127.0.0.1:3000` |
+/// | Technitium admin | `http://127.0.0.1:5380` |
+/// | Mailcow web | `https://127.0.0.1:8444` |
+/// | Matrix client | *(none — set `DEPLOYWERK_INTEGRATION_MATRIX_CLIENT_URL` if needed)* |
+pub(crate) fn merge_local_integration_defaults(urls: &mut IntegrationUrls) {
+    if urls.traefik_dashboard_url.is_none() {
+        urls.traefik_dashboard_url = Some("http://127.0.0.1:8080".into());
+    }
+    if urls.portainer_url.is_none() {
+        urls.portainer_url = Some("https://127.0.0.1:9443".into());
+    }
+    if urls.forgejo_url.is_none() {
+        urls.forgejo_url = Some("http://127.0.0.1:3000".into());
+    }
+    if urls.technitium_url.is_none() {
+        urls.technitium_url = Some("http://127.0.0.1:5380".into());
+    }
+    if urls.mailcow_url.is_none() {
+        urls.mailcow_url = Some("https://127.0.0.1:8444".into());
+    }
+}
+
 /// Values needed by the background deploy worker (clone into spawned tasks).
 #[derive(Clone)]
 pub struct DeployWorkerConfig {
@@ -87,6 +137,20 @@ pub struct Config {
     pub public_app_url: Option<String>,
     /// When true, send best-effort SMTP mail after sensitive super-admin mutations (requires SMTP).
     pub admin_action_emails_enabled: bool,
+    /// When true, `DEPLOYWERK_LOCAL_SERVICE_DEFAULTS` filled unset integration URLs with 127.0.0.1 defaults.
+    pub local_service_defaults: bool,
+    /// Links shown under Platform integrations (bootstrap + UI).
+    pub integration_urls: IntegrationUrls,
+    /// Optional base URL for operator-hosted docs (e.g. raw GitHub docs tree). SSO section link uses `{base}/README.md#single-sign-on-oidc` when set.
+    pub documentation_base_url: Option<String>,
+    /// Technitium DNS HTTP API automation (optional; feature-flagged).
+    pub technitium_dns_enabled: bool,
+    pub technitium_api_url: Option<String>,
+    pub technitium_api_token: Option<String>,
+    /// Portainer read-only probe (optional; default off).
+    pub portainer_integration_enabled: bool,
+    pub portainer_api_url: Option<String>,
+    pub portainer_api_token: Option<String>,
 }
 
 fn browser_origin_from_issuer(iss: &str) -> Option<&str> {
@@ -344,6 +408,42 @@ impl Config {
             .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
             .unwrap_or(false);
 
+        let mut integration_urls = IntegrationUrls {
+            forgejo_url: optional_integration_url("DEPLOYWERK_INTEGRATION_FORGEJO_URL"),
+            mailcow_url: optional_integration_url("DEPLOYWERK_INTEGRATION_MAILCOW_URL"),
+            portainer_url: optional_integration_url("DEPLOYWERK_INTEGRATION_PORTAINER_URL"),
+            technitium_url: optional_integration_url("DEPLOYWERK_INTEGRATION_TECHNITIUM_URL"),
+            matrix_client_url: optional_integration_url("DEPLOYWERK_INTEGRATION_MATRIX_CLIENT_URL"),
+            traefik_dashboard_url: optional_integration_url("DEPLOYWERK_INTEGRATION_TRAEFIK_URL"),
+        };
+
+        let local_service_defaults = env::var("DEPLOYWERK_LOCAL_SERVICE_DEFAULTS")
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false);
+        if local_service_defaults {
+            merge_local_integration_defaults(&mut integration_urls);
+        }
+
+        let documentation_base_url = optional_integration_url("DEPLOYWERK_DOCUMENTATION_BASE_URL");
+
+        let technitium_dns_enabled = env::var("DEPLOYWERK_TECHNITIUM_DNS_ENABLED")
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false);
+        let technitium_api_url = optional_integration_url("DEPLOYWERK_TECHNITIUM_API_URL");
+        let technitium_api_token = env::var("DEPLOYWERK_TECHNITIUM_API_TOKEN")
+            .ok()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty());
+
+        let portainer_integration_enabled = env::var("DEPLOYWERK_PORTAINER_INTEGRATION_ENABLED")
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false);
+        let portainer_api_url = optional_integration_url("DEPLOYWERK_PORTAINER_API_URL");
+        let portainer_api_token = env::var("DEPLOYWERK_PORTAINER_API_TOKEN")
+            .ok()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty());
+
         Self {
             database_url: env::var("DATABASE_URL").unwrap_or_else(|_| {
                 "postgresql://deploywerk:deploywerk@127.0.0.1:5432/deploywerk".into()
@@ -385,6 +485,15 @@ impl Config {
             smtp_settings,
             public_app_url,
             admin_action_emails_enabled,
+            local_service_defaults,
+            integration_urls,
+            documentation_base_url,
+            technitium_dns_enabled,
+            technitium_api_url,
+            technitium_api_token,
+            portainer_integration_enabled,
+            portainer_api_url,
+            portainer_api_token,
         }
     }
 
@@ -442,5 +551,33 @@ impl Config {
             pr_preview_isolated_network,
             smtp_settings: self.smtp_settings.clone(),
         }
+    }
+}
+
+#[cfg(test)]
+mod integration_defaults_tests {
+    use super::{merge_local_integration_defaults, IntegrationUrls};
+
+    #[test]
+    fn merge_local_defaults_fills_empty_slots() {
+        let mut u = IntegrationUrls::default();
+        merge_local_integration_defaults(&mut u);
+        assert_eq!(u.traefik_dashboard_url.as_deref(), Some("http://127.0.0.1:8080"));
+        assert_eq!(u.portainer_url.as_deref(), Some("https://127.0.0.1:9443"));
+        assert_eq!(u.forgejo_url.as_deref(), Some("http://127.0.0.1:3000"));
+        assert_eq!(u.technitium_url.as_deref(), Some("http://127.0.0.1:5380"));
+        assert_eq!(u.mailcow_url.as_deref(), Some("https://127.0.0.1:8444"));
+        assert!(u.matrix_client_url.is_none());
+    }
+
+    #[test]
+    fn merge_local_defaults_preserves_explicit_urls() {
+        let mut u = IntegrationUrls {
+            forgejo_url: Some("http://custom:9000".into()),
+            ..Default::default()
+        };
+        merge_local_integration_defaults(&mut u);
+        assert_eq!(u.forgejo_url.as_deref(), Some("http://custom:9000"));
+        assert_eq!(u.portainer_url.as_deref(), Some("https://127.0.0.1:9443"));
     }
 }

@@ -1,196 +1,349 @@
 # DeployWerk V2
 
-Rust **API** (`deploywerk-api`), **CLI** (`deploywerk-cli`), and **Vite + React** web UI. Teams, projects, environments, Docker applications, deploy jobs (SSH or platform Docker), optional Git webhooks, optional OIDC via **Authentik**.
+Rust **API** (`deploywerk-api`), **CLI** (`deploywerk-cli`), and **Vite + React** web UI. Teams, projects, environments, Docker applications, deploy jobs (SSH or platform Docker), optional Git webhooks, optional OIDC (e.g. Authentik).
 
-**Implementation** (API behavior, SQL migrations, UI wiring) lives in this repository. The **Enterprise Platform Specification** (intended product surface) is indexed in [docs/README.md](docs/README.md), starting with [docs/spec/00-overview.md](docs/spec/00-overview.md). **Spec vs code status** (done / partial / pending): [docs/STATUS.md](docs/STATUS.md). Local **platform admin** routes and API checks: [docs/ADMIN_DEV.md](docs/ADMIN_DEV.md).
+**This file is the only operator documentation in the repository.** Older spec/status markdown was removed; use `git log` / history if you need prior `docs/` content.
 
 ---
 
-## Run everything (PostgreSQL + API + web)
+## Where to put the code (Debian 13 production)
 
-**Requirements:** Docker (Compose v2) for the default flow. Rust and Node are only needed if you develop with **host** `cargo` / Vite (see below).
+**Recommended layout**
 
-1. Copy [.env.example](.env.example) to `.env` in the repo root.
-2. Start the full stack in Docker (builds images on first run):
+| Path | Purpose |
+|------|---------|
+| `/opt/deploywerk` | Git clone of this repository (builds, `cargo`, `web/`) |
+| `/var/lib/deploywerk` | Runtime data (`git-cache`, volumes) for user `deploywerk` |
+| `/etc/deploywerk/deploywerk.env` | Secrets and config (`chmod 600`, root or deploywerk-readable only) |
+| `/var/www/deploywerk` | Built static SPA (`web/dist` copied here) |
 
-**One script (Git Bash / WSL / macOS / Linux):**
+**Dedicated user:** `deploywerk` (system user, home under `/var/lib/deploywerk`). Own code and data: `chown -R deploywerk:deploywerk /opt/deploywerk` (after clone) and `/var/lib/deploywerk`.
+
+**How to upload the tree**
+
+1. **Git (preferred):** On the server, `sudo mkdir -p /opt/deploywerk && sudo chown $USER:$USER /opt/deploywerk`, then clone your private remote (e.g. Forgejo on port `3000`, Git over SSH on host port `2222`):
+
+   ```bash
+   cd /opt
+   git clone git@git.example.com:you/deploywerk.git deploywerk
+   ```
+
+   Use SSH keys; never store passwords in the remote URL.
+
+2. **rsync / scp:** From your workstation, sync the repo to `/opt/deploywerk/` excluding `target/`, `node_modules/`, `.env`.
+
+**Safe baseline**
+
+- PostgreSQL: separate role and database for DeployWerk (not the superuser).
+- Firewall: Traefik usually owns **80/443** on the host; only open what you need (SSH, and published Docker ports you intend to expose). Align UFW/nftables with Portainer stacks.
+- Secrets: only in `/etc/deploywerk/deploywerk.env` or your secret manager — not committed.
+
+---
+
+## Co-located Docker services (typical single-host stack)
+
+DeployWerk runs **natively** (systemd + API + nginx on a **loopback** port). Other services often run in **Docker** (Portainer-managed): Traefik, Mailcow, Forgejo, Technitium, Matrix (Synapse), etc.
+
+| Service | Typical published ports (host) | Role |
+|---------|-------------------------------|------|
+| Traefik | 80, 443, 8080 (dashboard) | TLS edge, routes to DeployWerk nginx on loopback |
+| Portainer | 9443 | Container UI (optional probe via DeployWerk env) |
+| Forgejo | 3000, 2222 (SSH) | Git; webhooks → DeployWerk API |
+| Mailcow | 25, 465, 587, 8444, … | SMTP for `DEPLOYWERK_SMTP_*`; UI on 8444 |
+| Technitium | 53, 5380 | DNS (optional automation) |
+| Synapse | 8008 (internal) | Matrix; `/.well-known` routing in Traefik |
+
+Point **Traefik** at `http://HOST_LOOPBACK:PORT` where nginx serves the SPA (e.g. `127.0.0.1:8085` or Docker bridge IP to host). See [docs/traefik/orbytals-file-provider.example.yml](docs/traefik/orbytals-file-provider.example.yml) for Matrix `/.well-known` priority over the app.
+
+Use `GET /api/v1/bootstrap` and **Team → Integrations** for link slots. Set `DEPLOYWERK_LOCAL_SERVICE_DEFAULTS=true` only when the **API process** can reach those URLs on `127.0.0.1` (native API on host); if the API ran in Docker, use explicit `DEPLOYWERK_INTEGRATION_*_URL` values instead.
+
+---
+
+## Quick start (Docker Compose)
+
+**Requirements:** Docker Compose v2. Copy [.env.example](.env.example) to `.env` at the repo root.
 
 ```bash
 chmod +x scripts/deploywerk-dev.sh
 ./scripts/deploywerk-dev.sh run              # Postgres + API + web (nginx on :5173)
-./scripts/deploywerk-dev.sh run --authentik  # same + Authentik profile (see below)
-./scripts/deploywerk-dev.sh stop             # stop containers (pass --authentik if you used it for run)
-./scripts/deploywerk-dev.sh clean            # docker compose down -v (removes DB volumes; same --authentik rule)
-./scripts/deploywerk-dev.sh clean --rmi-local  # also remove images built by Compose
+./scripts/deploywerk-dev.sh run --authentik  # + Authentik (OIDC)
+./scripts/deploywerk-dev.sh stop
+./scripts/deploywerk-dev.sh clean            # removes DB volumes (use --authentik if needed)
 ```
 
-- **Web UI:** http://127.0.0.1:5173 (nginx serves the built SPA and proxies `/api` to the API container).
-- **API (direct):** http://127.0.0.1:8080  
-- Compose overrides **`DATABASE_URL`** for the `api` service to use the `postgres` container (`@postgres:5432`). Your `.env` may still say `127.0.0.1` for local tools; that is fine for the API container.
+- **Web UI:** http://127.0.0.1:5173  
+- **API:** http://127.0.0.1:8080  
 
-Optional: local mail stack (Stalwart + Isotope webmail) is documented in [docs/MAIL_DEV.md](docs/MAIL_DEV.md).
-Optional: bare metal install (Ubuntu 24.04 LTS; DeployWerk + optional second host for mail/Matrix/DNS; nginx or Traefik; Let’s Encrypt; XRDP) is documented in [docs/BARE_METAL.md](docs/BARE_METAL.md).
+**Windows (PowerShell):** `docker compose up -d --build` (add `--profile authentik` for Authentik).
 
-If you started **Authentik** (`run --authentik`), use **`stop --authentik`** and **`clean --authentik`** so Authentik services and volumes are included.
+Compose sets `DATABASE_URL` for the `api` service to the `postgres` container; your `.env` may still say `127.0.0.1` for host tools.
 
-**Windows (PowerShell)** — use Docker Compose directly (same as the script):
+### Host development (API + Vite on the machine, Postgres in Docker)
 
-```powershell
-docker compose up -d --build
-# or with Authentik:
-docker compose --profile authentik up -d --build
-```
-
-Or run **`deploywerk-dev.sh`** from **Git Bash** for the same commands. The Authentik-only helper script remains optional:
-
-```powershell
-.\scripts\deploywerk-dev-authentik.ps1
-```
-
-### Host development (Postgres in Docker, API + web on the machine)
-
-For fast iteration without rebuilding images:
-
-1. `docker compose up -d postgres` (starts only Postgres; does not start `api` / `web` services).
-2. From repo root: `cargo run -p deploywerk-api --bin deploywerk-api`
-3. `cd web && npm install && npm run dev` → http://127.0.0.1:5173 (Vite proxies `/api` per [web/vite.config.ts](web/vite.config.ts)).
+1. `docker compose up -d postgres`
+2. `cargo run -p deploywerk-api --bin deploywerk-api`
+3. `cd web && npm install && npm run dev` → http://127.0.0.1:5173 (Vite proxies `/api`; see [web/vite.config.ts](web/vite.config.ts))
 
 ### Web `/api` returns 404
 
-The browser calls paths like `/api/v1/bootstrap`. Those are **not** served by the static UI—they must reach **`deploywerk-api`**.
+| Cause | Fix |
+|--------|-----|
+| API not running | `curl -sf http://127.0.0.1:8080/api/v1/health` |
+| Static host without proxy | Set `VITE_API_URL` at build time or use nginx/Vite proxy (see [.env.example](.env.example)) |
+| API on another port | Set `DEPLOYWERK_API_PROXY` in repo-root `.env` for Vite |
 
-| Cause | What to do |
-|--------|------------|
-| API not running | With the Docker stack, nginx proxies `/api` to the API container; confirm `docker compose ps` and `curl -sf http://127.0.0.1:8080/api/v1/health`. On host dev, start the API on **8080** (or match `DEPLOYWERK_API_PROXY`). |
-| `vite preview` or static `dist/` without a proxy | Vite’s **`preview`** server proxies `/api` the same as dev (see [web/vite.config.ts](web/vite.config.ts)), but a generic static host does not. Either put a reverse proxy in front, or set **`VITE_API_URL`** at build time to your API origin (see [.env.example](.env.example)). |
-| API on a non-default port | Set **`DEPLOYWERK_API_PROXY`** in `.env` (repo root) to match `http://HOST:PORT` (Vite loads env from the repo root). Align **`PORT`** in `.env` with that URL. |
+### Logs (Compose)
 
-The Vite app uses **`envDir` = repository root** so `VITE_API_URL`, `DEPLOYWERK_API_PROXY`, and API `.env` stay in one place (not only `web/.env`).
+`docker compose logs -f api web` — add `--profile authentik` and service names if used.
 
-The dev overlay message about **React DevTools** is unrelated to API errors.
+### Migrations and demo data
 
-### Where to read logs
-
-- **Default (full stack in Docker):** `docker compose logs -f api web` (add `--profile authentik` and Authentik service names if needed).
-- **Postgres (Docker):** `docker compose logs -f postgres`
-- **API on host:** terminal running `cargo run`
-
-### Database migrations and demo seed
-
-1. **Migrations** run automatically when the API starts (`sqlx` migrate against `DATABASE_URL`).
-2. **Demo users and sample project/env/app** run when **`SEED_DEMO_USERS=true`** and **`APP_ENV`** is not `production` (see [`crates/deploywerk-api/src/seed.rs`](crates/deploywerk-api/src/seed.rs)).
-3. **Demo passwords on the login page** come from **`GET /api/v1/bootstrap`** when **`DEMO_LOGINS_PUBLIC=true`** (non-production only).
+Migrations run when the API starts. Demo users load when `SEED_DEMO_USERS=true` and `APP_ENV` is not `production`. Demo passwords on the login page come from `GET /api/v1/bootstrap` when `DEMO_LOGINS_PUBLIC=true` (non-production only).
 
 ---
 
-## Run with Authentik (OIDC)
+## Authentik (OIDC) in Docker
 
-Authentik runs in Docker on **9000** (HTTP) and **9443** (HTTPS). DeployWerk’s Postgres stays on **5432**. If `Bind for 0.0.0.0:9000 failed` appears, another process owns that port — stop it or change the left-hand side of `ports:` for `authentik-server` in [docker-compose.yml](docker-compose.yml) (e.g. `9001:9000`).
+Authentik uses host ports **9000** / **9443** by default. If port 9000 is busy, change the **left** side of `ports:` for `authentik-server` in [docker-compose.yml](docker-compose.yml).
 
-1. Set strong values in `.env` (see [.env.example](.env.example)):
+1. Set `AUTHENTIK_SECRET_KEY` and `AUTHENTIK_POSTGRES_PASSWORD` in `.env` (see [.env.example](.env.example)).
+2. `docker compose --profile authentik up -d --build` or `./scripts/deploywerk-dev.sh run --authentik`
+3. Wait: `curl -sf http://127.0.0.1:9000/-/health/live/`
+4. Open http://127.0.0.1:9000/if/admin/ — complete installer.
+5. Create OAuth2/OpenID provider + application in Authentik; copy issuer URL.
+6. Set `AUTHENTIK_ISSUER`, `AUTHENTIK_CLIENT_ID`, `AUTHENTIK_CLIENT_SECRET`, `AUTHENTIK_REDIRECT_URI` (e.g. `http://127.0.0.1:5173/login/oidc/callback` for local Vite).
+7. `docker compose restart api`
 
-   - `AUTHENTIK_SECRET_KEY` — long random string  
-   - `AUTHENTIK_POSTGRES_PASSWORD` — DB password for Authentik’s Postgres  
+Logs: `docker compose --profile authentik logs -f authentik-server authentik-worker`
 
-2. Start stack:
+---
 
-   ```bash
-   docker compose --profile authentik up -d --build
-   ```
+## Production: native API + nginx + systemd (Debian 13)
 
-   Or: `./scripts/deploywerk-dev.sh run --authentik`
+Typical path on **Debian 13 (trixie)** or compatible: **PostgreSQL** on the host, **deploywerk-api** under **systemd**, **nginx** on a **loopback** port when Traefik fronts TLS, static SPA under `/var/www/deploywerk`.
 
-3. Wait until Authentik answers (first boot can take 1–2 minutes):
-
-   ```bash
-   curl -sf http://127.0.0.1:9000/-/health/live/
-   ```
-
-4. **First-time setup:** open http://127.0.0.1:9000/if/admin/ — create the admin account (new volume) and complete the installer.
-
-5. In Authentik: **Applications → Providers** — create an **OAuth2/OpenID** provider. Then **Applications → Applications** — create an application linked to that provider.
-
-6. Copy the **OpenID Configuration Issuer** URL for your application (looks like  
-   `http://127.0.0.1:9000/application/o/<slug>/`).
-
-7. In DeployWerk `.env` set:
-
-   | Variable | Example |
-   |----------|---------|
-   | `AUTHENTIK_ISSUER` | Issuer URL above (no trailing slash inconsistency — API normalizes) |
-   | `AUTHENTIK_CLIENT_ID` | Client id from the provider |
-   | `AUTHENTIK_CLIENT_SECRET` | Client secret |
-   | `AUTHENTIK_REDIRECT_URI` | Must match provider; e.g. `http://127.0.0.1:5173/login/oidc/callback` for local Vite |
-
-   Optional:
-
-   | Variable | Purpose |
-   |----------|---------|
-   | `AUTHENTIK_BROWSER_BASE_URL` | `http://127.0.0.1:9000` if issuer alone is not enough for admin links |
-   | `AUTHENTIK_ADMIN_URL` | Full admin URL override (default derives to `{origin}/if/admin/`) |
-
-8. Restart the API container: `docker compose restart api` (or `./scripts/deploywerk-dev.sh stop` then `run` / `run --authentik`). The **login** page shows **Continue with Authentik** when OIDC is configured, and **Open IdP admin** when an admin URL is resolved.
-
-**Logs (host, not in DeployWerk UI):**
+### Packages and toolchain
 
 ```bash
-docker compose --profile authentik logs -f authentik-server authentik-worker
+sudo apt update
+sudo apt install -y nginx postgresql build-essential pkg-config libssl-dev \
+  certbot python3-certbot-nginx git curl
 ```
 
-**SCIM / Mollie / billing webhooks:** env vars are listed in [.env.example](.env.example); behavior is implemented in `crates/deploywerk-api/src/scim.rs`, `team_platform.rs`, etc.
+Install **Rust** via [rustup](https://rustup.rs/) and **Node.js 22** via [NodeSource](https://github.com/nodesource/distributions) or `nvm` — match versions used for production builds.
 
----
+### Docker (optional on the API host)
 
-## External deploy worker
+Only required if you enable **Platform Docker** deploys (`DEPLOYWERK_PLATFORM_DOCKER_ENABLED=true`). The `docker` group is effectively root — use deliberately.
 
-If `DEPLOYWERK_DEPLOY_DISPATCH=external`, the API only enqueues jobs. Run:
+### Service user and directories
 
 ```bash
-cargo run -p deploywerk-api --bin deploywerk-deploy-worker
+sudo useradd --system --create-home --home-dir /var/lib/deploywerk --shell /usr/sbin/nologin deploywerk
+sudo mkdir -p /opt/deploywerk /var/lib/deploywerk/git-cache /var/lib/deploywerk/volumes /etc/deploywerk
+sudo chown -R deploywerk:deploywerk /var/lib/deploywerk
 ```
 
-Same `.env` as the API (database + `SERVER_KEY_ENCRYPTION_KEY` + platform/Traefik vars).
+Place your clone at `/opt/deploywerk` and `chown -R deploywerk:deploywerk /opt/deploywerk` after checkout.
+
+### Database
+
+Create PostgreSQL user and database `deploywerk` (Debian: `sudo -u postgres createuser`, `createdb`, `psql` …).
+
+### Environment file
+
+Create `/etc/deploywerk/deploywerk.env` (`chmod 600`). Minimal:
+
+```bash
+APP_ENV=production
+DATABASE_URL=postgresql://deploywerk:PASSWORD@127.0.0.1:5432/deploywerk
+JWT_SECRET=...                    # openssl rand -base64 48
+SERVER_KEY_ENCRYPTION_KEY=...     # openssl rand -hex 32
+HOST=127.0.0.1
+PORT=8080
+DEPLOYWERK_PUBLIC_APP_URL=https://app.example.com
+```
+
+See [.env.example](.env.example) for SMTP (Mailcow submission), Platform Docker, Traefik edge, integration URLs, OIDC, SCIM, etc.
+
+### Build and install
+
+```bash
+cd /opt/deploywerk
+sudo -u deploywerk git pull   # or your deploy procedure
+sudo -u deploywerk cargo build --release -p deploywerk-api --bin deploywerk-api
+sudo -u deploywerk cargo build --release -p deploywerk-api --bin deploywerk-deploy-worker
+sudo install -m 0755 target/release/deploywerk-api /usr/local/bin/deploywerk-api
+sudo install -m 0755 target/release/deploywerk-deploy-worker /usr/local/bin/deploywerk-deploy-worker
+cd web && npm ci && npm run build
+sudo mkdir -p /var/www/deploywerk && sudo cp -a dist/* /var/www/deploywerk/
+sudo chown -R deploywerk:deploywerk /opt/deploywerk /var/lib/deploywerk
+```
+
+### systemd
+
+**deploywerk-api.service** — `User=deploywerk`, `WorkingDirectory=/opt/deploywerk`, `EnvironmentFile=/etc/deploywerk/deploywerk.env`, `ExecStart=/usr/local/bin/deploywerk-api`.
+
+If `DEPLOYWERK_DEPLOY_DISPATCH=external`, run **deploywerk-deploy-worker** in a separate unit with the same env file.
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable --now deploywerk-api
+journalctl -u deploywerk-api -f
+```
+
+### nginx
+
+Example: `root /var/www/deploywerk`; `location /api/` → `proxy_pass http://127.0.0.1:8080` with `X-Forwarded-*`; `location /` → `try_files` for SPA.
+
+- If **nginx terminates TLS** on this host: use **certbot** (`sudo certbot --nginx -d app.example.com`) after DNS points to the server.
+- If **Traefik terminates TLS**, bind nginx only to `127.0.0.1:8085` (or similar); do not compete for public 80/443.
+
+### Verify
+
+```bash
+curl -sf http://127.0.0.1:8080/api/v1/health
+curl -sf http://127.0.0.1:8080/api/v1/bootstrap | head
+```
+
+Browser: public URL — SPA loads; `/api/v1/bootstrap` not 404.
+
+### External deploy worker
+
+If `DEPLOYWERK_DEPLOY_DISPATCH=external`, run `deploywerk-deploy-worker` with the same `DATABASE_URL` and keys as the API.
 
 ---
 
-## Docker Compose logs and troubleshooting
+## Traefik on the same host (DeployWerk native, edge in Docker)
 
-Logs are read on the host where Compose runs; DeployWerk does not stream container logs in the UI.
+When **Traefik** already owns **80/443**, DeployWerk’s nginx must **not** bind the same public ports for the same hostname.
 
-1. See service status: `docker compose ps` (add `-a` to include stopped containers).
-2. Follow recent output from **all** default services:  
-   `docker compose logs -f --tail=200`
-3. **API and web:** `docker compose logs -f api web`
-4. **PostgreSQL** only (DeployWerk DB):  
-   `docker compose logs -f postgres`
-5. **Authentik** (when using `--profile authentik`):  
-   `docker compose --profile authentik logs -f authentik-server authentik-worker`
-6. **Port 9000 already in use** (Authentik HTTP): another process is bound to the host port. Either stop that process or change the **left** side of `ports:` for `authentik-server` in [docker-compose.yml](docker-compose.yml) (for example `9001:9000`), then use the new host port in `AUTHENTIK_*` / browser URLs.
+1. **API** listens on `127.0.0.1:8080`.
+2. **nginx** serves SPA + `/api` proxy on a **loopback port** (e.g. `127.0.0.1:8085`).
+3. **Traefik** routes `Host(your.domain)` to the host (e.g. `http://172.17.0.1:8085` via Docker bridge gateway, or `host.docker.internal` where supported).
 
-If a container exits immediately, `docker compose logs <service>` (without `-f`) usually shows the fatal error.
+### Matrix + apex
+
+If Synapse uses the same apex domain, `/.well-known/matrix/*` must reach Synapse. Use **higher Traefik priority** for `PathPrefix(\`/.well-known/matrix\`)` than the catch-all DeployWerk router. Example: [docs/traefik/orbytals-file-provider.example.yml](docs/traefik/orbytals-file-provider.example.yml).
+
+TLS is usually **Traefik ACME**, not certbot on the loopback nginx.
+
+### Example env (public site)
+
+- `DEPLOYWERK_PUBLIC_APP_URL=https://your.domain`
+- `HOST=127.0.0.1`, `PORT=8080`
+- SMTP via Mailcow: `DEPLOYWERK_SMTP_*`
+- Platform Docker + Traefik labels: `DEPLOYWERK_PLATFORM_DOCKER_ENABLED`, `DEPLOYWERK_EDGE_MODE=traefik`, `DEPLOYWERK_TRAEFIK_DOCKER_NETWORK`, `DEPLOYWERK_APPS_BASE_DOMAIN`
 
 ---
 
-## Configuration highlights
+## Environment variables (summary)
 
-| Variable | Purpose |
-|----------|---------|
-| `DATABASE_URL` | PostgreSQL (default matches `docker compose` Postgres) |
-| `JWT_SECRET` | Session signing |
-| `SERVER_KEY_ENCRYPTION_KEY` | 32-byte key for SSH private keys at rest |
-| `APP_ENV=production` | Disables demo seeding and demo password exposure |
-| `DEPLOYWERK_PLATFORM_DOCKER_ENABLED` | Run `docker` on the API host |
-| `DEPLOYWERK_APPS_BASE_DOMAIN` / `DEPLOYWERK_EDGE_MODE` | Traefik-style hostnames |
-| `DEPLOYWERK_SMTP_HOST`, `DEPLOYWERK_SMTP_FROM`, … | Transactional SMTP (invites + `email` notification endpoints) — see [.env.example](.env.example) |
-| `DEPLOYWERK_PUBLIC_APP_URL` | Public UI origin for invite links in email |
+Authoritative list: [.env.example](.env.example) and `crates/deploywerk-api/src/config.rs`.
 
-Webhook URLs (prepend your public API origin):
+| Area | Examples |
+|------|-----------|
+| Core | `DATABASE_URL`, `JWT_SECRET`, `SERVER_KEY_ENCRYPTION_KEY`, `APP_ENV`, `HOST`, `PORT` |
+| Public UI | `DEPLOYWERK_PUBLIC_APP_URL` (invite links) |
+| Mail | `DEPLOYWERK_SMTP_*` (Mailcow submission host/port/user) |
+| OIDC | `AUTHENTIK_ISSUER`, `AUTHENTIK_CLIENT_ID`, `AUTHENTIK_CLIENT_SECRET`, `AUTHENTIK_REDIRECT_URI` |
+| Platform Docker | `DEPLOYWERK_PLATFORM_DOCKER_ENABLED`, `DEPLOYWERK_APPS_BASE_DOMAIN`, `DEPLOYWERK_EDGE_MODE`, `DEPLOYWERK_TRAEFIK_DOCKER_NETWORK` |
+| Integration links (UI + bootstrap) | `DEPLOYWERK_LOCAL_SERVICE_DEFAULTS=true` or `DEPLOYWERK_INTEGRATION_*_URL` (Forgejo, Mailcow, Portainer, Technitium, Matrix client, Traefik dashboard) |
+| Docs link | `DEPLOYWERK_DOCUMENTATION_BASE_URL` — SSO help links to `{base}/README.md#single-sign-on-oidc` |
+| Optional probes | `DEPLOYWERK_PORTAINER_INTEGRATION_*`, `DEPLOYWERK_TECHNITIUM_DNS_*` |
 
-| Path | Notes |
-|------|--------|
-| `POST /api/v1/hooks/github/{team_id}` | GitHub push; optional `X-Hub-Signature-256` |
-| `POST /api/v1/hooks/gitlab/{team_id}` | GitLab push; optional `X-Gitlab-Token` |
-| `POST /api/v1/hooks/github-app` | GitHub App; needs `GITHUB_APP_WEBHOOK_SECRET` |
+**Note:** If the API runs **inside** Docker, `127.0.0.1` is the container, not the host — use explicit URLs instead of `DEPLOYWERK_LOCAL_SERVICE_DEFAULTS` for host-published ports.
+
+---
+
+## Single sign-on (OIDC)
+
+DeployWerk uses **Authentik-shaped** env vars (`AUTHENTIK_*`). In your IdP, create an OAuth2/OpenID app; **redirect URI** must match `AUTHENTIK_REDIRECT_URI`. In-app help: `/app/sso-setup`.
+
+**Redirect URI examples**
+
+| App | Path (typical) |
+|-----|----------------|
+| DeployWerk | `https://<app>/login/oidc/callback` |
+| Forgejo / Portainer | Per their OAuth settings |
+
+Optional: `DEPLOYWERK_SCIM_BEARER_TOKEN` for SCIM provisioning (see `.env.example`).
+
+Forgejo **deploy automation** uses GitLab-style webhooks: `POST /api/v1/hooks/gitlab/{team_id}` (separate from SSO).
+
+---
+
+## Mail
+
+### Production / Mailcow
+
+Point `DEPLOYWERK_SMTP_*` at your SMTP submission host (e.g. `mail.example.com:587` STARTTLS). Create a mailbox or SMTP credentials in Mailcow for DeployWerk.
+
+Team mail product features (when enabled in code) are documented in this README only; there is no separate spec file in-repo.
+
+### Local dev (Compose): Stalwart + Isotope
+
+The default [docker-compose.yml](docker-compose.yml) can include Stalwart and webmail proxied at `/mail/` on the dev nginx. Example `.env`:
+
+```env
+DEPLOYWERK_SMTP_HOST=stalwart
+DEPLOYWERK_SMTP_PORT=587
+DEPLOYWERK_SMTP_TLS=starttls
+DEPLOYWERK_SMTP_FROM=DeployWerk <noreply@dev.local>
+DEPLOYWERK_SMTP_USER=deploywerk
+DEPLOYWERK_SMTP_PASSWORD=deploywerk-dev-only-change-me
+```
+
+Stalwart admin is typically on host **8082** in that layout; configure domain and users in Stalwart’s UI, then `docker compose restart api`.
+
+---
+
+## Production checklist
+
+- [ ] DNS **A/AAAA** to server; TLS (Let’s Encrypt or Traefik ACME) and renewal tested.
+- [ ] Firewall: **22**, **80**, **443** (and mail/DNS ports only if those services run on the same host).
+- [ ] `APP_ENV=production`; strong `JWT_SECRET` and `SERVER_KEY_ENCRYPTION_KEY`; `/etc/deploywerk/deploywerk.env` **0600** and backed up.
+- [ ] PostgreSQL up; backups + tested restore path.
+- [ ] `DEPLOYWERK_PUBLIC_APP_URL` and optional `DEPLOYWERK_SMTP_*` for email.
+- [ ] Inline vs `DEPLOYWERK_DEPLOY_DISPATCH=external` worker decided; worker systemd enabled if external.
+- [ ] `curl -sf http://127.0.0.1:8080/api/v1/health` and browser SPA + `/api/v1/bootstrap` OK.
+
+---
+
+## Webhooks (reference)
+
+| Method | Path |
+|--------|------|
+| POST | `/api/v1/hooks/github/{team_id}` |
+| POST | `/api/v1/hooks/gitlab/{team_id}` |
+| POST | `/api/v1/hooks/github-app` (GitHub App) |
+
+Prepend your public API origin. Secrets: see [.env.example](.env.example).
+
+---
+
+## Firewall bootstrap script
+
+[scripts/server-bootstrap-orbytals.sh](scripts/server-bootstrap-orbytals.sh) installs base packages, Docker, UFW holes for mail/Matrix/DNS — use as a **starting point**, then finish Traefik/Mailcow/Matrix/DNS per your stack.
+
+---
+
+## Optional: remote desktop / Hestia
+
+XRDP and HestiaCP are **optional** and conflict with DeployWerk if they fight for the same **80/443** on one machine — keep separate hosts or one reverse proxy owner.
+
+---
+
+## Tight fit with your Docker stack (roadmap)
+
+Use these in order; all exist or are stubbed in the current codebase:
+
+- **`GET /api/v1/bootstrap`** — non-secret integration URLs for Traefik, Forgejo, Mailcow, Portainer, Technitium, Matrix client, etc.
+- **`DEPLOYWERK_LOCAL_SERVICE_DEFAULTS`** — one-shot fill for typical single-host `127.0.0.1` ports when the API runs on the **host** (not inside Docker).
+- **Forgejo / GitHub / GitLab** — configure webhooks to DeployWerk team endpoints (see Webhooks table).
+- **OIDC** — align `AUTHENTIK_*` with your IdP; optional SCIM.
+- **Platform Docker + Traefik** — `DEPLOYWERK_EDGE_MODE=traefik` and app container labels when deploying user apps on the same Traefik network.
+- **Portainer / Technitium** — optional read-only probes via env (platform admin).
 
 ---
 
@@ -199,39 +352,26 @@ Webhook URLs (prepend your public API origin):
 | Method | Path | Auth |
 |--------|------|------|
 | GET | `/api/v1/health` | No |
-| GET | `/api/v1/bootstrap` | No — demo flags, OIDC hints, `idp_admin_url`, mail/public-URL flags |
+| GET | `/api/v1/bootstrap` | No |
 | POST | `/api/v1/auth/login` | No |
 | GET | `/api/v1/me` | Bearer |
-| GET | `/api/v1/teams` | Bearer (`read`) |
-| POST | `/api/v1/applications/{id}/deploy` | Bearer (`deploy`) |
-| POST | `.../applications/{id}/rollback` | Bearer (`deploy`) — prior image must exist |
-| GET | `.../applications/{id}/container-log-stream` | Bearer (`read`) — SSE, `docker logs` poll |
 
-Full route list: `rg "route\\(" crates/deploywerk-api/src`
+Full routes: `rg "route\\(" crates/deploywerk-api/src`
 
 ---
 
 ## CLI
 
-Install from the workspace (binary name `deploywerk`). Config and JWT are stored under the OS config directory (e.g. `deploywerk-cli/config.json`).
-
 ```bash
 cargo install --path crates/deploywerk-cli
-export DEPLOYWERK_API_URL=http://127.0.0.1:8080   # optional; or pass --base-url each time
-
-deploywerk auth login --email you@example.com     # prompts for password; saves JWT
-deploywerk auth status                            # API URL, config path, logged-in yes/no (token never printed)
-deploywerk auth logout                            # clears stored JWT
-
+export DEPLOYWERK_API_URL=http://127.0.0.1:8080
+deploywerk auth login --email you@example.com
 deploywerk teams list
-deploywerk teams list --json # machine-readable tables
-
-deploywerk tokens list --json
 ```
 
 ---
 
-## Workspace layout
+## Repository layout
 
 ```
 crates/deploywerk-api   # HTTP API + migrations + deploy worker binary
@@ -240,9 +380,8 @@ crates/deploywerk-core
 crates/deploywerk-agent
 web/
 docker-compose.yml
+docs/traefik/           # example Traefik routes (YAML)
 ```
-
----
 
 ## License
 

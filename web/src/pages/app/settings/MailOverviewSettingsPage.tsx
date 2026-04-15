@@ -35,9 +35,9 @@ export function MailOverviewSettingsPage() {
         <div>
           <h2 className="text-sm font-semibold text-slate-900">Webmail (client)</h2>
           <p className="mt-1 text-sm text-slate-600">
-            In-browser mail (JMAP) is planned but not shipped yet. See{" "}
-            <code className="rounded bg-white px-1 text-xs">docs/spec/08-mail-platform.md</code> in the DeployWerk
-            repository for the product direction.
+            In-browser mail (JMAP) is planned but not shipped yet. See the <code className="rounded bg-white px-1 text-xs">Mail</code> section in{" "}
+            <code className="rounded bg-white px-1 text-xs">README.md</code> in the DeployWerk repository for
+            product direction and SMTP setup.
           </p>
         </div>
       </div>

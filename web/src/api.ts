@@ -188,6 +188,22 @@ export type ValidateServerResponse = {
   detail?: string;
 };
 
+/** Instance operator links from `GET /api/v1/bootstrap` (`DEPLOYWERK_INTEGRATION_*`). */
+export type PlatformIntegrationsBootstrap = {
+  /** True when API applied DEPLOYWERK_LOCAL_SERVICE_DEFAULTS (127.0.0.1 preset). */
+  localServiceDefaults?: boolean;
+  forgejoUrl?: string | null;
+  mailcowUrl?: string | null;
+  portainerUrl?: string | null;
+  technitiumUrl?: string | null;
+  matrixClientUrl?: string | null;
+  traefikDashboardUrl?: string | null;
+  /** In-app route or external docs. */
+  ssoPlaybookUrl?: string | null;
+  technitiumDnsAutomationConfigured?: boolean;
+  portainerHealthProbeConfigured?: boolean;
+};
+
 export type Bootstrap = {
   demo_logins_enabled: boolean;
   allow_local_password_auth: boolean;
@@ -205,6 +221,9 @@ export type Bootstrap = {
   mail_smtp_configured?: boolean;
   /** `DEPLOYWERK_PUBLIC_APP_URL` set (invite links in email). */
   public_app_url_configured?: boolean;
+  /** Public app origin when configured (webhook URL hints). */
+  public_app_url?: string | null;
+  platform_integrations?: PlatformIntegrationsBootstrap;
 };
 
 export type OidcConfig = {

@@ -81,6 +81,7 @@ export default function App() {
           <Route index element={<L.DashboardPage />} />
           <Route path="orgs/:orgId/settings" element={<L.OrganizationSettingsPage />} />
           <Route path="settings/tokens" element={<L.TokensPage />} />
+          <Route path="sso-setup" element={<L.SsoPlaybookPage />} />
           <Route path="teams/:teamId/projects" element={<L.ProjectsPage />} />
           <Route
             path="teams/:teamId/projects/:projectId/environments"

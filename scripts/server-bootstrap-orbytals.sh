@@ -49,4 +49,8 @@ docker network create proxy >/dev/null 2>&1 || true
 
 echo "== Done =="
 echo "Next steps:"
-echo "- Follow docs/BARE_METAL.md (Host B) to configure Traefik compose, Mailcow, Matrix, Technitium and DNS records."
+echo "- Full operator guide: README.md (Traefik, Mailcow, Matrix, Technitium, native DeployWerk, env, SSO)."
+echo "  - Same host as Traefik: bind nginx for SPA/API to 127.0.0.1:8085 (or similar); Traefik terminates TLS."
+echo "  - Example Traefik routes: docs/traefik/orbytals-file-provider.example.yml"
+echo "- UFW: this script opens mail, DNS, Matrix federation (8448), and RDP. API on 127.0.0.1:8080 only if not exposed publicly."
+echo "- DeployWerk on another machine: restrict SSH/VPN; DNS A/AAAA for app hostname."

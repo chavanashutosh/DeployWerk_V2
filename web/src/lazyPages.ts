@@ -17,6 +17,9 @@ export const EnvironmentsPage = lazy(() =>
   import("./pages/EnvironmentsPage").then((m) => ({ default: m.EnvironmentsPage })),
 );
 export const TokensPage = lazy(() => import("./pages/TokensPage").then((m) => ({ default: m.TokensPage })));
+export const SsoPlaybookPage = lazy(() =>
+  import("./pages/app/SsoPlaybookPage").then((m) => ({ default: m.SsoPlaybookPage })),
+);
 export const InvitePage = lazy(() => import("./pages/InvitePage").then((m) => ({ default: m.InvitePage })));
 export const TeamInvitePage = lazy(() => import("./pages/TeamInvitePage").then((m) => ({ default: m.TeamInvitePage })));
 export const ServersPage = lazy(() => import("./pages/ServersPage").then((m) => ({ default: m.ServersPage })));
