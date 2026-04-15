@@ -24,3 +24,7 @@ target
 *.db
 web/node_modules
 web/dist
+
+# Local dev script artifacts
+.deploywerk-dev.pids
+.deploywerk-logs/

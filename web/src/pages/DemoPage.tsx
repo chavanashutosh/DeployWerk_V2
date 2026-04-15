@@ -1,11 +1,15 @@
 import { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { KeyRound, ShieldAlert } from "lucide-react";
 import { apiFetch, type Bootstrap } from "@/api";
+import { useAuth } from "@/auth";
 
 export function DemoPage() {
+  const { login } = useAuth();
+  const nav = useNavigate();
   const [data, setData] = useState<Bootstrap | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [loadingEmail, setLoadingEmail] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -22,6 +26,22 @@ export function DemoPage() {
     };
   }, []);
 
+  async function signInAs(email: string, password: string) {
+    setLoadingEmail(email);
+    try {
+      const res = await apiFetch<{ token: string }>("/api/v1/auth/login", {
+        method: "POST",
+        body: JSON.stringify({ email, password }),
+      });
+      await login(res.token);
+      nav("/app", { replace: true });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Login failed");
+    } finally {
+      setLoadingEmail(null);
+    }
+  }
+
   return (
     <div className="mx-auto max-w-3xl px-4 py-16">
       <div className="flex items-start gap-3">
@@ -32,8 +52,8 @@ export function DemoPage() {
           <h1 className="text-3xl font-bold text-slate-900">Sample logins</h1>
           <p className="mt-2 text-slate-600">
             Demo accounts are seeded when the API runs in development and{" "}
-            <code className="rounded bg-slate-100 px-1.5 py-0.5 text-sm">DEMO_LOGINS_PUBLIC</code> is enabled (default
-            off in production). Passwords are shown here only when the API exposes them.
+            <code className="rounded bg-slate-100 px-1.5 py-0.5 text-sm">DEMO_LOGINS_PUBLIC</code> is enabled. Click a row
+            to sign in instantly when passwords are exposed.
           </p>
         </div>
       </div>
@@ -61,7 +81,7 @@ export function DemoPage() {
           <div className="border-b border-slate-100 bg-slate-50 px-6 py-4">
             <h2 className="flex items-center gap-2 text-sm font-semibold text-slate-900">
               <KeyRound className="h-4 w-4" strokeWidth={1.75} />
-              Demo team accounts
+              Demo team accounts — click to sign in
             </h2>
           </div>
           <table className="min-w-full text-left text-sm">
@@ -70,6 +90,7 @@ export function DemoPage() {
                 <th className="px-6 py-3">Email</th>
                 <th className="px-6 py-3">Role</th>
                 <th className="px-6 py-3">Password</th>
+                <th className="px-6 py-3">Action</th>
               </tr>
             </thead>
             <tbody>
@@ -78,16 +99,23 @@ export function DemoPage() {
                   <td className="px-6 py-3 font-mono text-slate-800">{a.email}</td>
                   <td className="px-6 py-3 text-slate-600">{a.role}</td>
                   <td className="px-6 py-3 font-mono text-slate-800">{a.password}</td>
+                  <td className="px-6 py-3">
+                    <button
+                      type="button"
+                      disabled={!!loadingEmail}
+                      onClick={() => void signInAs(a.email, a.password)}
+                      className="rounded-lg bg-brand-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-brand-700 disabled:opacity-50"
+                    >
+                      {loadingEmail === a.email ? "…" : "Sign in"}
+                    </button>
+                  </td>
                 </tr>
               ))}
             </tbody>
           </table>
           <div className="border-t border-slate-100 bg-slate-50 px-6 py-4">
-            <Link
-              to="/login"
-              className="text-sm font-semibold text-brand-600 hover:text-brand-700"
-            >
-              Go to sign in →
+            <Link to="/login" className="text-sm font-semibold text-brand-600 hover:text-brand-700">
+              Manual sign in →
             </Link>
           </div>
         </div>

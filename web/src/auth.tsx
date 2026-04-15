@@ -7,7 +7,14 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { apiFetch, getToken, setToken, type User } from "./api";
+import {
+  apiFetch,
+  getToken,
+  putCurrentOrganization,
+  putCurrentTeam,
+  setToken,
+  type User,
+} from "./api";
 
 type AuthState = {
   user: User | null;
@@ -15,6 +22,8 @@ type AuthState = {
   refresh: () => Promise<void>;
   login: (token: string) => Promise<void>;
   logout: () => void;
+  setCurrentTeam: (teamId: string) => Promise<void>;
+  setCurrentOrganization: (organizationId: string) => Promise<void>;
 };
 
 const AuthContext = createContext<AuthState | null>(null);
@@ -56,9 +65,33 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(null);
   }, []);
 
+  const setCurrentTeam = useCallback(
+    async (teamId: string) => {
+      await putCurrentTeam(teamId);
+      await refresh();
+    },
+    [refresh],
+  );
+
+  const setCurrentOrganization = useCallback(
+    async (organizationId: string) => {
+      await putCurrentOrganization(organizationId);
+      await refresh();
+    },
+    [refresh],
+  );
+
   const value = useMemo(
-    () => ({ user, loading, refresh, login, logout }),
-    [user, loading, refresh, login, logout],
+    () => ({
+      user,
+      loading,
+      refresh,
+      login,
+      logout,
+      setCurrentTeam,
+      setCurrentOrganization,
+    }),
+    [user, loading, refresh, login, logout, setCurrentTeam, setCurrentOrganization],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

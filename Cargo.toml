@@ -1,8 +1,17 @@
 [workspace]
 resolver = "2"
-members = ["crates/deploywerk-core", "crates/deploywerk-api", "crates/deploywerk-cli"]
+members = [
+    "crates/deploywerk-core",
+    "crates/deploywerk-api",
+    "crates/deploywerk-cli",
+    "crates/deploywerk-agent",
+]
 
 [workspace.package]
 version = "0.1.0"
 edition = "2021"
 license = "MIT"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1

@@ -1,16 +1,32 @@
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useAuth } from "@/auth";
-import { apiFetch } from "@/api";
+import { apiFetch, type Bootstrap } from "@/api";
 
 export function RegisterPage() {
   const { login } = useAuth();
   const nav = useNavigate();
+  const [bootstrap, setBootstrap] = useState<Bootstrap | null>(null);
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const b = await apiFetch<Bootstrap>("/api/v1/bootstrap");
+        if (!cancelled) setBootstrap(b);
+      } catch {
+        if (!cancelled) setBootstrap(null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
@@ -34,13 +50,32 @@ export function RegisterPage() {
     }
   }
 
+  const allowLocal = bootstrap?.allow_local_password_auth !== false;
+
+  if (bootstrap && !allowLocal) {
+    return (
+      <div className="mx-auto max-w-md px-4 py-16">
+        <div className="dw-card p-8">
+          <h1 className="text-2xl font-semibold tracking-tight text-slate-900">Create account</h1>
+          <p className="mt-2 text-sm text-slate-600">
+            Local registration is disabled on this instance. Use{" "}
+            <Link to="/login" className="dw-link-accent">
+              Sign in
+            </Link>{" "}
+            (SSO).
+          </p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="mx-auto max-w-md px-4 py-16">
-      <div className="rounded-2xl border border-slate-200 bg-white p-8 shadow-sm">
-        <h1 className="text-2xl font-bold text-slate-900">Create account</h1>
+      <div className="dw-card p-8">
+        <h1 className="text-2xl font-semibold tracking-tight text-slate-900">Create account</h1>
         <p className="mt-2 text-sm text-slate-600">
           Already registered?{" "}
-          <Link to="/login" className="font-medium text-brand-600 hover:text-brand-700">
+          <Link to="/login" className="dw-link-accent">
             Sign in
           </Link>
         </p>
@@ -55,7 +90,7 @@ export function RegisterPage() {
               autoComplete="name"
               value={name}
               onChange={(e) => setName(e.target.value)}
-              className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm shadow-sm focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/20"
+              className="mt-1 dw-input"
             />
           </div>
           <div>
@@ -69,7 +104,7 @@ export function RegisterPage() {
               required
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm shadow-sm focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/20"
+              className="mt-1 dw-input"
             />
           </div>
           <div>
@@ -84,18 +119,14 @@ export function RegisterPage() {
               minLength={8}
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm shadow-sm focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/20"
+              className="mt-1 dw-input"
             />
             <p className="mt-1 text-xs text-slate-500">At least 8 characters.</p>
           </div>
           {error && (
-            <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>
+            <p className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>
           )}
-          <button
-            type="submit"
-            disabled={pending}
-            className="w-full rounded-lg bg-brand-600 py-2.5 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-60"
-          >
+          <button type="submit" disabled={pending} className="dw-btn-primary w-full">
             {pending ? "Creating…" : "Create account"}
           </button>
         </form>
