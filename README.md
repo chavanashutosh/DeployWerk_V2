@@ -64,7 +64,7 @@ Use `GET /api/v1/bootstrap` and **Team → Integrations** for link slots. Set `D
 
 ## Quick start (Docker Compose)
 
-**Requirements:** Docker Compose v2. Copy [.env.example](.env.example) to `.env` at the repo root.
+**Requirements:** Docker Compose v2. Copy [.env.example](.env.example) to `.env` at the repo root (comment-free template with typical same-host ports for Traefik `8080`, Portainer `9443`, Forgejo `3000`, Technitium `5380`, Mailcow `8444`/SMTP `587`, Synapse `8008`; replace placeholders).
 
 ```bash
 chmod +x scripts/deploywerk-dev.sh
@@ -284,20 +284,9 @@ Point `DEPLOYWERK_SMTP_*` at your SMTP submission host (e.g. `mail.example.com:5
 
 Team mail product features (when enabled in code) are documented in this README only; there is no separate spec file in-repo.
 
-### Local dev (Compose): Stalwart + Isotope
+### Local dev (Compose)
 
-The default [docker-compose.yml](docker-compose.yml) can include Stalwart and webmail proxied at `/mail/` on the dev nginx. Example `.env`:
-
-```env
-DEPLOYWERK_SMTP_HOST=stalwart
-DEPLOYWERK_SMTP_PORT=587
-DEPLOYWERK_SMTP_TLS=starttls
-DEPLOYWERK_SMTP_FROM=DeployWerk <noreply@dev.local>
-DEPLOYWERK_SMTP_USER=deploywerk
-DEPLOYWERK_SMTP_PASSWORD=deploywerk-dev-only-change-me
-```
-
-Stalwart admin is typically on host **8082** in that layout; configure domain and users in Stalwart’s UI, then `docker compose restart api`.
+The default [docker-compose.yml](docker-compose.yml) does **not** bundle a mail server or webmail (avoids host port clashes such as `8082`). Point `DEPLOYWERK_SMTP_*` in `.env` at **Mailcow** or another SMTP host reachable from the API container (`host.docker.internal`, the host gateway IP, or a published port). If the API runs on the host with `127.0.0.1:587`, that matches a typical Mailcow submission listener.
 
 ---
 

@@ -99,34 +99,6 @@ services:
     depends_on:
       - api
 
-  stalwart:
-    image: stalwartlabs/stalwart:latest
-    restart: unless-stopped
-    ports:
-      # Web admin / API (avoid clashing with DeployWerk API on 8080)
-      - "8082:8080"
-      # SMTP (inbound testing; optional)
-      - "2525:25"
-      # Submission (STARTTLS) for DeployWerk SMTP
-      - "5870:587"
-      # IMAP (optional for external clients)
-      - "1430:143"
-      - "9930:993"
-    volumes:
-      - deploywerk_stalwart_data:/opt/stalwart
-
-  isotope-server:
-    image: marcnuri/isotope:server-latest
-    restart: unless-stopped
-    depends_on:
-      - stalwart
-
-  isotope-client:
-    image: marcnuri/isotope:client-latest
-    restart: unless-stopped
-    depends_on:
-      - isotope-server
-
   authentik-postgresql:
     image: postgres:16-alpine
     profiles: ["authentik"]
@@ -198,5 +170,4 @@ volumes:
   deploywerk_minio_data:
   deploywerk_git_cache:
   deploywerk_app_volumes:
-  deploywerk_stalwart_data:
   authentik_pg_data:
