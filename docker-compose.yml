@@ -1,0 +1,202 @@
+# Local stack: Postgres + API + web (nginx). From repo root:
+#   ./scripts/deploywerk-dev.sh run
+# Optional Authentik (OIDC/SCIM): ./scripts/deploywerk-dev.sh run --authentik
+# Set AUTHENTIK_SECRET_KEY and AUTHENTIK_POSTGRES_PASSWORD in .env (see .env.example).
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    command:
+      - postgres
+      - -c
+      - log_min_duration_statement=50
+      - -c
+      - log_statement=none
+      - -c
+      - log_lock_waits=on
+    environment:
+      POSTGRES_USER: deploywerk
+      POSTGRES_PASSWORD: deploywerk
+      POSTGRES_DB: deploywerk
+    ports:
+      - "5432:5432"
+    volumes:
+      - deploywerk_pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U deploywerk -d deploywerk"]
+      interval: 3s
+      timeout: 5s
+      retries: 5
+
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${DEPLOYWERK_MINIO_ROOT_USER:-deploywerk}
+      MINIO_ROOT_PASSWORD: ${DEPLOYWERK_MINIO_ROOT_PASSWORD:-deploywerk-dev-only-change-me}
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - deploywerk_minio_data:/data
+
+  minio-init:
+    image: minio/mc:latest
+    depends_on:
+      - minio
+    environment:
+      DEPLOYWERK_MINIO_ROOT_USER: ${DEPLOYWERK_MINIO_ROOT_USER:-deploywerk}
+      DEPLOYWERK_MINIO_ROOT_PASSWORD: ${DEPLOYWERK_MINIO_ROOT_PASSWORD:-deploywerk-dev-only-change-me}
+      DEPLOYWERK_MINIO_BUCKET: ${DEPLOYWERK_MINIO_BUCKET:-deploywerk}
+    entrypoint: ["/bin/sh","-lc"]
+    command:
+      - >
+        until mc alias set local http://minio:9000 "$$DEPLOYWERK_MINIO_ROOT_USER" "$$DEPLOYWERK_MINIO_ROOT_PASSWORD"; do sleep 1; done &&
+        mc mb --ignore-existing "local/$$DEPLOYWERK_MINIO_BUCKET"
+
+  api:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.api
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql://deploywerk:deploywerk@postgres:5432/deploywerk
+      HOST: 0.0.0.0
+      PORT: "8080"
+      RUST_LOG: ${RUST_LOG:-deploywerk_api=info,tower_http=info,sqlx=warn}
+      DEPLOYWERK_PLATFORM_DOCKER_ENABLED: "true"
+      DEPLOYWERK_GIT_CACHE_ROOT: "/var/lib/deploywerk/git-cache"
+      DEPLOYWERK_VOLUMES_ROOT: "/var/lib/deploywerk/volumes"
+      DEPLOYWERK_DEFAULT_STORAGE_ENDPOINT_URL: ${DEPLOYWERK_DEFAULT_STORAGE_ENDPOINT_URL:-http://minio:9000}
+      DEPLOYWERK_DEFAULT_STORAGE_BUCKET: ${DEPLOYWERK_DEFAULT_STORAGE_BUCKET:-deploywerk}
+      DEPLOYWERK_DEFAULT_STORAGE_REGION: ${DEPLOYWERK_DEFAULT_STORAGE_REGION:-us-east-1}
+      DEPLOYWERK_DEFAULT_STORAGE_PATH_STYLE: ${DEPLOYWERK_DEFAULT_STORAGE_PATH_STYLE:-true}
+      DEPLOYWERK_DEFAULT_STORAGE_ACCESS_KEY: ${DEPLOYWERK_DEFAULT_STORAGE_ACCESS_KEY:-deploywerk}
+      DEPLOYWERK_DEFAULT_STORAGE_SECRET_KEY: ${DEPLOYWERK_DEFAULT_STORAGE_SECRET_KEY:-deploywerk-dev-only-change-me}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - deploywerk_git_cache:/var/lib/deploywerk/git-cache
+      - deploywerk_app_volumes:/var/lib/deploywerk/volumes
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_started
+      minio-init:
+        condition: service_started
+
+  web:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.web
+    restart: unless-stopped
+    ports:
+      - "5173:80"
+    depends_on:
+      - api
+
+  stalwart:
+    image: stalwartlabs/stalwart:latest
+    restart: unless-stopped
+    ports:
+      # Web admin / API (avoid clashing with DeployWerk API on 8080)
+      - "8082:8080"
+      # SMTP (inbound testing; optional)
+      - "2525:25"
+      # Submission (STARTTLS) for DeployWerk SMTP
+      - "5870:587"
+      # IMAP (optional for external clients)
+      - "1430:143"
+      - "9930:993"
+    volumes:
+      - deploywerk_stalwart_data:/opt/stalwart
+
+  isotope-server:
+    image: marcnuri/isotope:server-latest
+    restart: unless-stopped
+    depends_on:
+      - stalwart
+
+  isotope-client:
+    image: marcnuri/isotope:client-latest
+    restart: unless-stopped
+    depends_on:
+      - isotope-server
+
+  authentik-postgresql:
+    image: postgres:16-alpine
+    profiles: ["authentik"]
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: authentik
+      POSTGRES_PASSWORD: ${AUTHENTIK_POSTGRES_PASSWORD:-authentik}
+      POSTGRES_DB: authentik
+    volumes:
+      - authentik_pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -d authentik -U authentik"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  authentik-redis:
+    image: redis:alpine
+    profiles: ["authentik"]
+    restart: unless-stopped
+    command: --save 60 1 --loglevel warning
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli ping | grep PONG"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  authentik-server:
+    image: ghcr.io/goauthentik/server:2024.10.4
+    profiles: ["authentik"]
+    restart: unless-stopped
+    command: server
+    environment:
+      AUTHENTIK_SECRET_KEY: ${AUTHENTIK_SECRET_KEY:-dev-only-change-me-for-authentik}
+      AUTHENTIK_REDIS__HOST: authentik-redis
+      AUTHENTIK_POSTGRESQL__HOST: authentik-postgresql
+      AUTHENTIK_POSTGRESQL__USER: authentik
+      AUTHENTIK_POSTGRESQL__NAME: authentik
+      AUTHENTIK_POSTGRESQL__PASSWORD: ${AUTHENTIK_POSTGRES_PASSWORD:-authentik}
+    ports:
+      - "9000:9000"
+      - "9443:9443"
+    depends_on:
+      authentik-postgresql:
+        condition: service_healthy
+      authentik-redis:
+        condition: service_healthy
+
+  authentik-worker:
+    image: ghcr.io/goauthentik/server:2024.10.4
+    profiles: ["authentik"]
+    restart: unless-stopped
+    command: worker
+    environment:
+      AUTHENTIK_SECRET_KEY: ${AUTHENTIK_SECRET_KEY:-dev-only-change-me-for-authentik}
+      AUTHENTIK_REDIS__HOST: authentik-redis
+      AUTHENTIK_POSTGRESQL__HOST: authentik-postgresql
+      AUTHENTIK_POSTGRESQL__USER: authentik
+      AUTHENTIK_POSTGRESQL__NAME: authentik
+      AUTHENTIK_POSTGRESQL__PASSWORD: ${AUTHENTIK_POSTGRES_PASSWORD:-authentik}
+    depends_on:
+      authentik-postgresql:
+        condition: service_healthy
+      authentik-redis:
+        condition: service_healthy
+
+volumes:
+  deploywerk_pg_data:
+  deploywerk_minio_data:
+  deploywerk_git_cache:
+  deploywerk_app_volumes:
+  deploywerk_stalwart_data:
+  authentik_pg_data:

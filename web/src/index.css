@@ -1,0 +1,71 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    @apply font-sans text-sm;
+  }
+
+  h1,
+  h2,
+  h3,
+  h4,
+  h5,
+  h6 {
+    @apply text-base font-semibold tracking-tight text-slate-900;
+  }
+}
+
+@layer components {
+  .dw-card {
+    @apply rounded-md border border-slate-200 bg-white;
+    box-shadow:
+      0 1px 2px 0 rgb(0 0 0 / 0.04),
+      0 1px 3px 0 rgb(0 0 0 / 0.06);
+  }
+
+  .dw-card-elevated {
+    @apply rounded-md border border-slate-200 bg-white shadow-md;
+  }
+
+  .dw-btn-primary {
+    @apply inline-flex items-center justify-center rounded-md bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-900 disabled:pointer-events-none disabled:opacity-50;
+  }
+
+  .dw-btn-secondary {
+    @apply inline-flex items-center justify-center rounded-md border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-800 shadow-sm transition hover:bg-slate-50 disabled:pointer-events-none disabled:opacity-50;
+  }
+
+  .dw-input {
+    @apply w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm placeholder:text-slate-400 focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-400;
+  }
+
+  .dw-select {
+    @apply max-w-full truncate rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-sm font-medium text-slate-900 shadow-sm focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-400;
+  }
+
+  .dw-link {
+    @apply font-medium text-slate-700 hover:text-slate-900 hover:underline decoration-slate-300;
+  }
+
+  .dw-link-accent {
+    @apply font-medium text-slate-800 hover:text-slate-950 hover:underline;
+  }
+
+  .dw-text-success {
+    @apply text-emerald-800;
+  }
+
+  .dw-text-warning {
+    @apply text-amber-800;
+  }
+
+  .dw-text-danger {
+    @apply text-red-800;
+  }
+
+  .dw-muted {
+    @apply text-sm text-slate-600;
+  }
+}

@@ -1,0 +1,55 @@
+[package]
+name = "deploywerk-api"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "DeployWerk HTTP API"
+default-run = "deploywerk-api"
+
+[lib]
+name = "deploywerk_api"
+path = "src/lib.rs"
+
+[[bin]]
+name = "deploywerk-api"
+path = "src/main.rs"
+
+[[bin]]
+name = "deploywerk-deploy-worker"
+path = "src/bin/deploywerk_deploy_worker.rs"
+
+[dependencies]
+deploywerk-core = { path = "../deploywerk-core" }
+axum = { version = "0.8", features = ["macros", "json"] }
+tower = { version = "0.5", features = ["limit"] }
+tower-http = { version = "0.6", features = ["cors", "trace"] }
+tokio = { version = "1.42", features = ["macros", "rt-multi-thread", "signal", "process"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+sqlx = { version = "0.8", features = ["runtime-tokio", "postgres", "macros", "migrate", "uuid", "chrono"] }
+uuid = { version = "1.11", features = ["serde", "v4"] }
+chrono = { version = "0.4", features = ["serde"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+argon2 = { version = "0.5", features = ["std"] }
+jsonwebtoken = "9.3"
+thiserror = "2.0"
+dotenvy = "0.15"
+anyhow = "1.0"
+sha2 = "0.10"
+hex = "0.4"
+base64 = "0.22"
+aes-gcm = "0.10"
+rand = "0.8"
+russh = { version = "0.60", default-features = false, features = ["flate2", "ring", "rsa"] }
+async-trait = "0.1"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+openidconnect = { version = "4", default-features = false, features = ["reqwest", "rustls-tls"] }
+hmac = "0.12"
+subtle = "2.5"
+async-stream = "0.3"
+bytes = "1"
+lettre = { version = "0.11", default-features = false, features = ["smtp-transport", "tokio1", "tokio1-native-tls", "builder"] }
+totp-rs = { version = "5", features = ["otpauth", "gen_secret"] }
+roxmltree = "0.20"
+ipnetwork = { version = "0.20", default-features = false }
