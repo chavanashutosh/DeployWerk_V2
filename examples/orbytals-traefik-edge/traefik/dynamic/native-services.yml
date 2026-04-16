@@ -1,0 +1,70 @@
+# File provider: DeployWerk on host nginx + Matrix delegation (aligns with
+# docs/traefik/orbytals-file-provider.example.yml — cert resolver `le`).
+#
+# Replace DEPLOYWERK_UPSTREAM if your Docker bridge to host differs from 172.17.0.1:8085
+# (e.g. `docker run --rm alpine ip route | awk '/default/ {print $3}'`).
+# Synapse must be reachable as hostname `synapse` on the `proxy` network (attach Synapse).
+
+http:
+  routers:
+    orbytals-www-redirect:
+      rule: Host(`www.orbytals.com`)
+      entryPoints:
+        - websecure
+      middlewares:
+        - orbytals-www-to-apex
+      tls:
+        certResolver: le
+      service: noop@internal
+
+    orbytals-matrix-wellknown:
+      rule: Host(`orbytals.com`) && PathPrefix(`/.well-known/matrix`)
+      entryPoints:
+        - websecure
+      priority: 100
+      tls:
+        certResolver: le
+      service: orbytals-synapse-http
+
+    orbytals-deploywerk-apex:
+      rule: Host(`orbytals.com`)
+      entryPoints:
+        - websecure
+      priority: 10
+      tls:
+        certResolver: le
+      service: orbytals-deploywerk-nginx
+
+    orbytals-api:
+      rule: Host(`api.orbytals.com`)
+      entryPoints:
+        - websecure
+      tls:
+        certResolver: le
+      service: orbytals-deploywerk-nginx
+
+    orbytals-app:
+      rule: Host(`app.orbytals.com`)
+      entryPoints:
+        - websecure
+      tls:
+        certResolver: le
+      service: orbytals-deploywerk-nginx
+
+  middlewares:
+    orbytals-www-to-apex:
+      redirectRegex:
+        regex: "^https://www\\.orbytals\\.com/(.*)"
+        replacement: "https://orbytals.com/${1}"
+        permanent: true
+
+  services:
+    orbytals-synapse-http:
+      loadBalancer:
+        servers:
+          - url: "http://synapse:8008"
+
+    orbytals-deploywerk-nginx:
+      loadBalancer:
+        servers:
+          - url: "http://172.17.0.1:8085"

@@ -1,0 +1,12 @@
+# Paste under the Forgejo (gitea) service. Set ROOT_URL in app.ini:
+#   ROOT_URL=https://git.orbytals.com/
+
+labels:
+  - "traefik.enable=true"
+  - "traefik.docker.network=proxy"
+  - "traefik.http.routers.forgejo.rule=Host(`git.orbytals.com`)"
+  - "traefik.http.routers.forgejo.entrypoints=websecure"
+  - "traefik.http.routers.forgejo.tls.certresolver=le"
+  - "traefik.http.routers.forgejo.service=forgejo-svc"
+  - "traefik.http.routers.forgejo.middlewares=secure-headers@file"
+  - "traefik.http.services.forgejo-svc.loadbalancer.server.port=3000"

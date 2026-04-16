@@ -1,0 +1,15 @@
+# Mailcow: set SKIP_LETS_ENCRYPT=y in mailcow.conf (Traefik terminates TLS).
+# Prefer docker-compose.override.yml in the Mailcow directory (see script output).
+# Attach nginx-mailcow to external network `proxy` (same as Traefik) and set this label
+# to that network. If you only join Mailcow's project network, set traefik.docker.network
+# to that project name (often mailcowdockerized) and add Traefik to that network.
+
+labels:
+  - "traefik.enable=true"
+  - "traefik.docker.network=proxy"
+  - "traefik.http.routers.mailcow.rule=Host(`mail.orbytals.com`)"
+  - "traefik.http.routers.mailcow.entrypoints=websecure"
+  - "traefik.http.routers.mailcow.tls.certresolver=le"
+  - "traefik.http.routers.mailcow.service=mailcow-svc"
+  - "traefik.http.routers.mailcow.middlewares=secure-headers@file"
+  - "traefik.http.services.mailcow-svc.loadbalancer.server.port=8082"

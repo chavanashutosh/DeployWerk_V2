@@ -1,0 +1,20 @@
+# Copy to dashboard-auth.yml and merge into dashboard.yml router, or append middlewares here
+# and reference from dashboard.yml using YAML anchors (not portable) — recommended: edit
+# dashboard.yml to add:
+#   middlewares: [dashboard-auth]
+# then use this file as dashboard-auth.yml:
+#
+# http:
+#   middlewares:
+#     dashboard-auth:
+#       basicAuth:
+#         users:
+#           - "admin:$apr1$...."   # output of: htpasswd -nb admin password
+
+http:
+  middlewares:
+    dashboard-auth:
+      basicAuth:
+        removeHeader: true
+        users:
+          - "admin:$apr1$CHANGEME$REPLACEWITH_htpasswd_-nb_output"

@@ -1,0 +1,13 @@
+# Paste under the Synapse service. homeserver.yaml (excerpt):
+#   serve_server_wellknown: true
+#   public_baseurl: https://chat.hermesapp.live/
+
+labels:
+  - "traefik.enable=true"
+  - "traefik.docker.network=proxy"
+  - "traefik.http.routers.synapse.rule=Host(`chat.hermesapp.live`)"
+  - "traefik.http.routers.synapse.entrypoints=websecure"
+  - "traefik.http.routers.synapse.tls.certresolver=le"
+  - "traefik.http.routers.synapse.service=synapse-svc"
+  - "traefik.http.routers.synapse.middlewares=secure-headers@file"
+  - "traefik.http.services.synapse-svc.loadbalancer.server.port=8008"

@@ -1,0 +1,14 @@
+# Shared middlewares referenced as name@file (e.g. secure-headers@file).
+
+http:
+  middlewares:
+    secure-headers:
+      headers:
+        browserXssFilter: true
+        contentTypeNosniff: true
+        frameDeny: true
+        stsIncludeSubdomains: true
+        stsPreload: true
+        stsSeconds: 31536000
+        sslProxyHeaders:
+          X-Forwarded-Proto: https

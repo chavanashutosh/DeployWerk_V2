@@ -1,0 +1,15 @@
+# HTTPS dashboard at traefik.orbytals.com (TLS via ACME).
+# Without dashboard-auth this exposes the dashboard to anyone who can reach the host.
+# After `htpasswd -nb admin yourpassword` (escape $ for compose if you use labels), either:
+#   - add middlewares: [dashboard-auth] below and define dashboard-auth in dashboard-auth.yml, or
+#   - rely on 127.0.0.1:8080 only (api.insecure in traefik.yml) and firewall rules.
+
+http:
+  routers:
+    traefik-dashboard-secure:
+      rule: Host(`traefik.orbytals.com`)
+      entryPoints:
+        - websecure
+      tls:
+        certResolver: le
+      service: api@internal

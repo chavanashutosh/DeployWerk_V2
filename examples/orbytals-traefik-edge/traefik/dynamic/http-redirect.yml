@@ -1,0 +1,17 @@
+# Redirect cleartext to HTTPS without breaking ACME HTTP-01 on :80.
+http:
+  middlewares:
+    redirect-web-to-websecure:
+      redirectScheme:
+        scheme: https
+        permanent: true
+
+  routers:
+    http-catchall-redirect:
+      rule: PathPrefix(`/`) && !PathPrefix(`/.well-known/acme-challenge`)
+      entryPoints:
+        - web
+      priority: 1
+      middlewares:
+        - redirect-web-to-websecure
+      service: noop@internal

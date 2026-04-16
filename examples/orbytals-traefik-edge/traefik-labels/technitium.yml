@@ -1,0 +1,12 @@
+# Paste under the Technitium service in docker-compose (YAML `labels:` list).
+# Adjust network name if Technitium is not on `proxy`.
+
+labels:
+  - "traefik.enable=true"
+  - "traefik.docker.network=proxy"
+  - "traefik.http.routers.technitium.rule=Host(`dns.orbytals.com`)"
+  - "traefik.http.routers.technitium.entrypoints=websecure"
+  - "traefik.http.routers.technitium.tls.certresolver=le"
+  - "traefik.http.routers.technitium.service=technitium-svc"
+  - "traefik.http.routers.technitium.middlewares=secure-headers@file"
+  - "traefik.http.services.technitium-svc.loadbalancer.server.port=5380"
