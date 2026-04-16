@@ -78,13 +78,16 @@ SYNAPSE_HTTP_PORT="${SYNAPSE_HTTP_PORT:-8008}"
 TECHNITIUM_DIR="${TECHNITIUM_DIR:-${SERVICE_ROOT}/technitium}"
 TECHNITIUM_COMPOSE_FILE="${TECHNITIUM_COMPOSE_FILE:-${TECHNITIUM_DIR}/docker-compose.yml}"
 TECHNITIUM_HTTP_PORT="${TECHNITIUM_HTTP_PORT:-5380}"
+TECHNITIUM_DNS_PORT="${TECHNITIUM_DNS_PORT:-8053}"
 
 OPEN_COCKPIT_PORT="${OPEN_COCKPIT_PORT:-false}"
 INSTALL_XRDP="${INSTALL_XRDP:-false}"
 ENABLE_PUBLIC_MAIL_PORTS="${ENABLE_PUBLIC_MAIL_PORTS:-true}"
 ENABLE_PUBLIC_DNS_PORTS="${ENABLE_PUBLIC_DNS_PORTS:-true}"
+ENABLE_STANDARD_DNS_PORT_53="${ENABLE_STANDARD_DNS_PORT_53:-false}"
 ENABLE_PUBLIC_MATRIX_FEDERATION_PORT="${ENABLE_PUBLIC_MATRIX_FEDERATION_PORT:-true}"
 COCKPIT_USE_NETWORKMANAGER="${COCKPIT_USE_NETWORKMANAGER:-true}"
+COCKPIT_PORT="${COCKPIT_PORT:-9292}"
 
 die() {
   echo "error: $*" >&2
@@ -264,6 +267,11 @@ configure_firewall() {
   fi
 
   if [[ "${ENABLE_PUBLIC_DNS_PORTS}" == "true" ]]; then
+    ufw allow "${TECHNITIUM_DNS_PORT}/tcp" || true
+    ufw allow "${TECHNITIUM_DNS_PORT}/udp" || true
+  fi
+
+  if [[ "${ENABLE_STANDARD_DNS_PORT_53}" == "true" ]]; then
     ufw allow 53/tcp || true
     ufw allow 53/udp || true
   fi
@@ -273,9 +281,9 @@ configure_firewall() {
   fi
 
   if [[ "${OPEN_COCKPIT_PORT}" == "true" ]]; then
-    ufw allow 9090/tcp || true
+    ufw allow "${COCKPIT_PORT}/tcp" || true
   else
-    ufw deny 9090/tcp >/dev/null 2>&1 || true
+    ufw deny "${COCKPIT_PORT}/tcp" >/dev/null 2>&1 || true
   fi
 
   ufw --force enable || true
@@ -309,9 +317,22 @@ EOF
 
 configure_cockpit() {
   log "Configuring Cockpit"
+  configure_cockpit_socket_port
   systemctl enable --now cockpit.socket
   systemctl enable --now packagekit || true
   configure_cockpit_networkmanager
+}
+
+configure_cockpit_socket_port() {
+  log "Configuring Cockpit socket port (${COCKPIT_PORT})"
+  ensure_dir /etc/systemd/system/cockpit.socket.d
+  cat >/etc/systemd/system/cockpit.socket.d/99-orbytals-listen.conf <<EOF
+[Socket]
+ListenStream=
+ListenStream=${COCKPIT_PORT}
+EOF
+  systemctl daemon-reload
+  systemctl restart cockpit.socket || true
 }
 
 port_listeners() {
@@ -319,24 +340,9 @@ port_listeners() {
   ss -ltnp "sport = :${port}" 2>/dev/null | awk 'NR>1 {print $0}' || true
 }
 
-dns_listener_is_expected() {
-  local listeners="$1"
-  [[ -n "${listeners}" ]] || return 1
-
-  local normalized
-  normalized="$(printf '%s' "${listeners}" | tr '[:upper:]' '[:lower:]')"
-
-  if printf '%s' "${normalized}" | grep -Eq '(systemd-resolve|systemd-resolved)'; then
-    return 0
-  fi
-
-  if printf '%s' "${normalized}" | grep -Eq 'dnsmasq'; then
-    if printf '%s' "${normalized}" | grep -Eq '(127\.0\.0\.(53|54)|192\.168\.122\.1)'; then
-      return 0
-    fi
-  fi
-
-  return 1
+udp_port_listeners() {
+  local port="$1"
+  ss -lunp "sport = :${port}" 2>/dev/null | awk 'NR>1 {print $0}' || true
 }
 
 assert_port_available_or_managed() {
@@ -357,19 +363,20 @@ assert_port_available_or_managed() {
   die "port conflict on ${port}"
 }
 
-assert_dns_port_available_or_expected() {
+assert_udp_port_available_or_managed() {
+  local port="$1" why="$2"
   local listeners
-  listeners="$(port_listeners 53)"
+  listeners="$(udp_port_listeners "$port")"
   if [[ -z "${listeners}" ]]; then
     return
   fi
-
-  if dns_listener_is_expected "${listeners}"; then
-    warn "Port 53 is already in use by expected host DNS listeners; continuing."
+  if printf '%s' "$listeners" | grep -Eq '(docker-proxy|traefik|deploywerk-api|nginx|garage|forgejo|technitium|synapse|postfix|dovecot|portainer)'; then
+    warn "UDP port ${port} is already in use (${why}); looks like managed services. Continuing."
     return
   fi
-
-  assert_port_available_or_managed 53 "DNS TCP/UDP"
+  echo "UDP port ${port} is already in use (${why})." >&2
+  echo "$listeners" >&2
+  die "port conflict on udp/${port}"
 }
 
 preflight_ports() {
@@ -383,7 +390,12 @@ preflight_ports() {
     done
   fi
   if [[ "${ENABLE_PUBLIC_DNS_PORTS}" == "true" ]]; then
-    assert_dns_port_available_or_expected
+    assert_port_available_or_managed "${TECHNITIUM_DNS_PORT}" "Technitium DNS (TCP)"
+    assert_udp_port_available_or_managed "${TECHNITIUM_DNS_PORT}" "Technitium DNS (UDP)"
+  fi
+  if [[ "${ENABLE_STANDARD_DNS_PORT_53}" == "true" ]]; then
+    assert_port_available_or_managed 53 "Standard DNS (TCP)"
+    assert_udp_port_available_or_managed 53 "Standard DNS (UDP)"
   fi
   if [[ "${ENABLE_PUBLIC_MATRIX_FEDERATION_PORT}" == "true" ]]; then
     assert_port_available_or_managed 8448 "Matrix federation"
@@ -396,7 +408,7 @@ preflight_ports() {
   assert_port_available_or_managed "${DEPLOYWERK_NGINX_PORT}" "DeployWerk nginx"
   assert_port_available_or_managed "${MAILCOW_HTTP_PORT}" "Mailcow HTTP bind"
   assert_port_available_or_managed "${MAILCOW_HTTPS_PORT}" "Mailcow HTTPS bind"
-  assert_port_available_or_managed 9090 "Cockpit host socket"
+  assert_port_available_or_managed "${COCKPIT_PORT}" "Cockpit host socket"
   assert_port_available_or_managed "${GARAGE_S3_PORT}" "Garage S3"
   assert_port_available_or_managed "${GARAGE_WEB_PORT}" "Garage web"
   assert_port_available_or_managed "${GARAGE_ADMIN_PORT}" "Garage admin"
@@ -530,7 +542,7 @@ http:
       loadBalancer:
         serversTransport: cockpit-insecure-transport
         servers:
-          - url: "https://${host_gw}:9090"
+          - url: "https://${host_gw}:${COCKPIT_PORT}"
 
   serversTransports:
     cockpit-insecure-transport:
@@ -922,8 +934,8 @@ services:
       DNS_SERVER_DOMAIN: ${ORBYTALS_DNS_DOMAIN}
       DNS_SERVER_ADMIN_PASSWORD: ${TECHNITIUM_ADMIN_PASSWORD}
     ports:
-      - "53:53/udp"
-      - "53:53/tcp"
+      - "${TECHNITIUM_DNS_PORT}:53/udp"
+      - "${TECHNITIUM_DNS_PORT}:53/tcp"
       - "127.0.0.1:${TECHNITIUM_HTTP_PORT}:5380"
     volumes:
       - ${TECHNITIUM_DIR}/config:/etc/dns
@@ -1176,7 +1188,7 @@ install_mailcow() {
 
 show_port_status() {
   log "Port status"
-  ss -ltnup | awk 'NR==1 || /:22 |:25 |:53 |:80 |:110 |:143 |:443 |:465 |:587 |:993 |:995 |:2222 |:8080 |:8082 |:8085 |:8444 |:8448 |:9090 |:18080 |:3900 |:3902 |:3903 /'
+  ss -ltnup | awk 'NR==1 || /:22 |:25 |:8053 |:80 |:110 |:143 |:443 |:465 |:587 |:993 |:995 |:2222 |:8080 |:8082 |:8085 |:8444 |:8448 |:9292 |:18080 |:3900 |:3902 |:3903 /'
 }
 
 verify_url() {

@@ -245,7 +245,7 @@ The supported production installer is now [scripts/orbytals-install.sh](scripts/
 - Mailcow / webmail
 - Forgejo
 - Synapse / Matrix
-- Technitium DNS
+- Technitium DNS (published on host **8053/tcp+udp**; not standard **53**)
 - Cockpit
 - Garage object storage bootstrap
 
@@ -299,7 +299,7 @@ Public inbound ports opened by the installer by default:
 | `143` | TCP | Mailcow IMAP |
 | `993` | TCP | Mailcow IMAPS |
 | `4190` | TCP | Mailcow ManageSieve |
-| `53` | TCP/UDP | Technitium DNS |
+| `8053` | TCP/UDP | Technitium DNS (non-standard; avoids host stub resolvers on `53`) |
 | `8448` | TCP | Matrix federation |
 
 Loopback-only host ports used by the installer:
@@ -310,7 +310,7 @@ Loopback-only host ports used by the installer:
 | `8085` | TCP | DeployWerk nginx |
 | `8082` | TCP | Mailcow HTTP binding for Traefik |
 | `8444` | TCP | Mailcow HTTPS binding for host-local use |
-| `9090` | TCP | Cockpit host socket, proxied by Traefik by default |
+| `9292` | TCP | Cockpit host socket, proxied by Traefik by default |
 | `18080` | TCP | Traefik local dashboard bind |
 | `3900` | TCP | Garage S3 API |
 | `3902` | TCP | Garage web endpoint |
@@ -325,7 +325,7 @@ Container-exposed or service-specific ports:
 | `3000` | TCP | Forgejo HTTP inside Docker network |
 | `8008` | TCP | Synapse HTTP inside Docker network |
 
-The installer keeps Cockpit direct `9090` access blocked by UFW unless `OPEN_COCKPIT_PORT=true` is explicitly set. Traefik’s local dashboard bind uses `127.0.0.1:18080` so it does not collide with the native DeployWerk API on `127.0.0.1:8080`.
+The installer keeps Cockpit direct `9292` access blocked by UFW unless `OPEN_COCKPIT_PORT=true` is explicitly set. Traefik’s local dashboard bind uses `127.0.0.1:18080` so it does not collide with the native DeployWerk API on `127.0.0.1:8080`.
 
 ---
 
@@ -434,13 +434,16 @@ docker logs garage --tail 200
 If the installer aborts on a port conflict, identify the owner:
 
 ```bash
-sudo ss -ltnp | grep -E ':80 |:443 |:8080 |:18080 |:3900 |:3902 |:3903 '
+sudo ss -ltnp | grep -E ':80 |:443 |:8053 |:8080 |:9292 |:18080 |:3900 |:3902 |:3903 '
+sudo ss -lunp | grep -E ':8053 '
 docker ps --format 'table {{.Names}}\t{{.Ports}}'
 ```
 
 The most common conflict is keeping native `deploywerk-api` on `127.0.0.1:8080` while also trying to bind Traefik’s local dashboard to the same port. The installer uses `127.0.0.1:18080` for the Traefik dashboard to avoid that.
 
-For DNS specifically, host listeners such as `systemd-resolved` on `127.0.0.53` / `127.0.0.54` and libvirt-managed `dnsmasq` on `192.168.122.1:53` are treated as expected during installer preflight. A different process owning `53` still causes the installer to stop.
+Technitium DNS is published on **8053/tcp+udp** by default so it does not fight with typical host DNS listeners on **53** (for example `systemd-resolved` and libvirt `dnsmasq`). Clients must query **8053** unless you add your own forwarding from **53** to **8053**.
+
+If you intentionally want Technitium on standard **53**, set `ENABLE_STANDARD_DNS_PORT_53=true` before running the installer (you will likely need to free or reconfigure host DNS services first).
 
 ## Optional: remote desktop / Hestia
 

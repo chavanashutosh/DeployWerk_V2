@@ -81,7 +81,7 @@ http:
       loadBalancer:
         serversTransport: cockpit-insecure-transport
         servers:
-          - url: "https://172.17.0.1:9090"
+          - url: "https://172.17.0.1:9292"
 
   serversTransports:
     cockpit-insecure-transport:
