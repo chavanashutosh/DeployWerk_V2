@@ -58,34 +58,40 @@ DeployWerk runs **natively** (systemd + API + nginx on a **loopback** port). Oth
 
 Point **Traefik** at `http://HOST_LOOPBACK:PORT` where nginx serves the SPA (e.g. `127.0.0.1:8085` or Docker bridge IP to host). See [docs/traefik/orbytals-file-provider.example.yml](docs/traefik/orbytals-file-provider.example.yml) for Matrix `/.well-known` priority over the app.
 
-Use `GET /api/v1/bootstrap` and **Team → Integrations** for link slots. Set `DEPLOYWERK_LOCAL_SERVICE_DEFAULTS=true` only when the **API process** can reach those URLs on `127.0.0.1` (native API on host); if the API ran in Docker, use explicit `DEPLOYWERK_INTEGRATION_*_URL` values instead.
+Use `GET /api/v1/bootstrap` and **Team → Integrations** for link slots. Set `DEPLOYWERK_LOCAL_SERVICE_DEFAULTS=true` only when the **API process** can reach integration URLs on `127.0.0.1` (native API on the host). For **Docker Compose**, [.env.example](.env.example) uses `DEPLOYWERK_LOCAL_SERVICE_DEFAULTS=false` and explicit `DEPLOYWERK_INTEGRATION_*_URL` values with **`host.docker.internal`** so the `api` container reaches services published on the host; [docker-compose.yml](docker-compose.yml) adds `extra_hosts: host.docker.internal:host-gateway` on `api` (Linux-friendly).
 
 ---
 
-## Quick start (Docker Compose)
+## Quick start (local development)
 
-**Requirements:** Docker Compose v2. Copy [.env.example](.env.example) to `.env` at the repo root (comment-free template with typical same-host ports for Traefik `8080`, Portainer `9443`, Forgejo `3000`, Technitium `5380`, Mailcow `8444`/SMTP `587`, Synapse `8008`; replace placeholders).
+**Requirements:** Docker Compose v2, repo-root `.env` (from [.env.example](.env.example)), **Rust (`cargo`)** and **Node/npm** on PATH for the default flow. Use Git Bash or WSL on Windows (this script is bash).
+
+**Default — native API + Vite** ([`scripts/deploywerk-dev.sh`](scripts/deploywerk-dev.sh)): Docker runs **Postgres**, **MinIO**, and **minio-init** only. The script starts **deploywerk-api** with `cargo run` and the UI with `npm run dev` in `web/`, with `DATABASE_URL` and MinIO pointed at the published host ports (**5432**, **19000**). Git cache and deploy volumes use repo-local `.deploywerk-git-cache/` and `.deploywerk-volumes/`.
+
+**Full stack in Docker** (optional): same script with **`--docker`** builds and runs **api** + **web** containers plus deps (matches old behavior). Use **`--authentik`** with either mode for OIDC services in Compose.
 
 ```bash
 chmod +x scripts/deploywerk-dev.sh
-./scripts/deploywerk-dev.sh run              # Postgres + API + web (nginx on :5173)
-./scripts/deploywerk-dev.sh run --authentik  # + Authentik (OIDC)
-./scripts/deploywerk-dev.sh stop
-./scripts/deploywerk-dev.sh clean            # removes DB volumes (use --authentik if needed)
+./scripts/deploywerk-dev.sh run                    # native API + Vite; Postgres + MinIO in Docker
+./scripts/deploywerk-dev.sh run --authentik        # same + Authentik in Docker
+./scripts/deploywerk-dev.sh run --docker           # everything in Docker (api + web + deps)
+./scripts/deploywerk-dev.sh run --docker --authentik
+./scripts/deploywerk-dev.sh stop                   # reads last run mode from .deploywerk-dev.mode
+./scripts/deploywerk-dev.sh clean                  # removes containers/volumes; add --rmi-local to prune images
 ```
 
-- **Web UI:** http://127.0.0.1:5173  
-- **API:** http://127.0.0.1:8080  
+| URL / port | Role |
+|------------|------|
+| http://127.0.0.1:5173 | Vite UI (native default) or nginx front (`--docker`) |
+| http://127.0.0.1:8080 | API |
+| http://127.0.0.1:19000 / 19001 | MinIO S3 API / console on host |
+| 5432 | Postgres on host |
 
-**Windows (PowerShell):** `docker compose up -d --build` (add `--profile authentik` for Authentik).
+**`.env` for `run --docker`:** use Minio at `http://minio:9000` and **`host.docker.internal`** for host integrations (see [.env.example](.env.example)). **Native default** overrides DB and storage in the script; keep other keys in `.env`.
 
-Compose sets `DATABASE_URL` for the `api` service to the `postgres` container; your `.env` may still say `127.0.0.1` for host tools.
+**Manual host dev** (without the script): `docker compose up -d postgres minio minio-init`, then `cargo run -p deploywerk-api --bin deploywerk-api` and `cd web && npm install && npm run dev` (Vite proxies `/api`; see [web/vite.config.ts](web/vite.config.ts)).
 
-### Host development (API + Vite on the machine, Postgres in Docker)
-
-1. `docker compose up -d postgres`
-2. `cargo run -p deploywerk-api --bin deploywerk-api`
-3. `cd web && npm install && npm run dev` → http://127.0.0.1:5173 (Vite proxies `/api`; see [web/vite.config.ts](web/vite.config.ts))
+**Windows (PowerShell) without bash:** `docker compose up -d postgres minio minio-init` then start API and Vite as above, or use WSL/Git Bash for the script.
 
 ### Web `/api` returns 404
 
@@ -95,9 +101,10 @@ Compose sets `DATABASE_URL` for the `api` service to the `postgres` container; y
 | Static host without proxy | Set `VITE_API_URL` at build time or use nginx/Vite proxy (see [.env.example](.env.example)) |
 | API on another port | Set `DEPLOYWERK_API_PROXY` in repo-root `.env` for Vite |
 
-### Logs (Compose)
+### Logs
 
-`docker compose logs -f api web` — add `--profile authentik` and service names if used.
+- **Native default:** `tail -f .deploywerk-logs/api.log .deploywerk-logs/web.log`
+- **Full Docker (`--docker`):** `docker compose logs -f api web` (add `--profile authentik` when used)
 
 ### Migrations and demo data
 
@@ -107,12 +114,12 @@ Migrations run when the API starts. Demo users load when `SEED_DEMO_USERS=true` 
 
 ## Authentik (OIDC) in Docker
 
-Authentik uses host ports **9000** / **9443** by default. If port 9000 is busy, change the **left** side of `ports:` for `authentik-server` in [docker-compose.yml](docker-compose.yml).
+In [docker-compose.yml](docker-compose.yml), Authentik is published on **9000** (HTTP) and **9445** (HTTPS, container `9443`) so MinIO can use **19000/19001** on the host and **9443** stays free for tools like Portainer.
 
 1. Set `AUTHENTIK_SECRET_KEY` and `AUTHENTIK_POSTGRES_PASSWORD` in `.env` (see [.env.example](.env.example)).
-2. `docker compose --profile authentik up -d --build` or `./scripts/deploywerk-dev.sh run --authentik`
+2. `./scripts/deploywerk-dev.sh run --authentik` (native API + Authentik in Docker) or `docker compose --profile authentik up -d --build` / `./scripts/deploywerk-dev.sh run --docker --authentik` (full stack in Docker)
 3. Wait: `curl -sf http://127.0.0.1:9000/-/health/live/`
-4. Open http://127.0.0.1:9000/if/admin/ — complete installer.
+4. Open **https://127.0.0.1:9445/** or http://127.0.0.1:9000/if/admin/ — complete installer (browser may warn on self-signed TLS).
 5. Create OAuth2/OpenID provider + application in Authentik; copy issuer URL.
 6. Set `AUTHENTIK_ISSUER`, `AUTHENTIK_CLIENT_ID`, `AUTHENTIK_CLIENT_SECRET`, `AUTHENTIK_REDIRECT_URI` (e.g. `http://127.0.0.1:5173/login/oidc/callback` for local Vite).
 7. `docker compose restart api`
@@ -238,6 +245,16 @@ TLS is usually **Traefik ACME**, not certbot on the loopback nginx.
 - SMTP via Mailcow: `DEPLOYWERK_SMTP_*`
 - Platform Docker + Traefik labels: `DEPLOYWERK_PLATFORM_DOCKER_ENABLED`, `DEPLOYWERK_EDGE_MODE=traefik`, `DEPLOYWERK_TRAEFIK_DOCKER_NETWORK`, `DEPLOYWERK_APPS_BASE_DOMAIN`
 
+### Orbytals edge example (Ubuntu)
+
+Example Traefik layout (`traefik/` + `traefik-labels/`) for **orbytals.com** / **hermesapp.live** lives under [examples/orbytals-traefik-edge](examples/orbytals-traefik-edge). On the server, install it under a single root such as **`/opt/orbytals/edge`** (the script default). Fresh host: run [scripts/server-bootstrap-orbytals.sh](scripts/server-bootstrap-orbytals.sh) first (Docker, external **`proxy`** network, `/opt/traefik/acme/acme.json`), then from a clone of this repo:
+
+```bash
+sudo bash scripts/traefik-edge-migrate-orbytals.sh all
+```
+
+Override paths with `EDGE_ROOT`, `SOURCE_TREE`, and optional `MAILCOW_DIR`, `TECHNITIUM_COMPOSE_DIR`, `FORGEJO_APP_INI` / `FORGEJO_DATA_DIR`, `SYNAPSE_HOMESERVER_YAML` / `SYNAPSE_DATA_DIR` — see the header comment in [scripts/traefik-edge-migrate-orbytals.sh](scripts/traefik-edge-migrate-orbytals.sh). Match DeployWerk to the same Docker network name as Traefik (example stack uses **`proxy`**: set `DEPLOYWERK_TRAEFIK_DOCKER_NETWORK=proxy`).
+
 ---
 
 ## Environment variables (summary)
@@ -286,7 +303,7 @@ Team mail product features (when enabled in code) are documented in this README 
 
 ### Local dev (Compose)
 
-The default [docker-compose.yml](docker-compose.yml) does **not** bundle a mail server or webmail (avoids host port clashes such as `8082`). Point `DEPLOYWERK_SMTP_*` in `.env` at **Mailcow** or another SMTP host reachable from the API container (`host.docker.internal`, the host gateway IP, or a published port). If the API runs on the host with `127.0.0.1:587`, that matches a typical Mailcow submission listener.
+The default [docker-compose.yml](docker-compose.yml) does **not** bundle a mail server or webmail (avoids host port clashes such as `8082`). [.env.example](.env.example) sets `DEPLOYWERK_SMTP_HOST=host.docker.internal` and port `587` so the **api** container can reach **Mailcow** on the host; the same file uses `host.docker.internal` for integration links. Compose adds `extra_hosts: host.docker.internal:host-gateway` on the `api` service. If the API runs **on the host** (not in Compose), use `127.0.0.1` for SMTP and integrations instead. Self-signed HTTPS to Portainer/Mailcow from inside the container may require extra TLS trust configuration.
 
 ---
 
@@ -331,7 +348,7 @@ XRDP and HestiaCP are **optional** and conflict with DeployWerk if they fight fo
 Use these in order; all exist or are stubbed in the current codebase:
 
 - **`GET /api/v1/bootstrap`** — non-secret integration URLs for Traefik, Forgejo, Mailcow, Portainer, Technitium, Matrix client, etc.
-- **`DEPLOYWERK_LOCAL_SERVICE_DEFAULTS`** — one-shot fill for typical single-host `127.0.0.1` ports when the API runs on the **host** (not inside Docker).
+- **`DEPLOYWERK_LOCAL_SERVICE_DEFAULTS`** — one-shot fill for typical single-host `127.0.0.1` ports when the API runs on the **host** (not inside Docker). With Compose, prefer explicit `DEPLOYWERK_INTEGRATION_*_URL` using `host.docker.internal` (see [.env.example](.env.example)).
 - **Forgejo / GitHub / GitLab** — configure webhooks to DeployWerk team endpoints (see Webhooks table).
 - **OIDC** — align `AUTHENTIK_*` with your IdP; optional SCIM.
 - **Platform Docker + Traefik** — `DEPLOYWERK_EDGE_MODE=traefik` and app container labels when deploying user apps on the same Traefik network.

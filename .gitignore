@@ -27,4 +27,7 @@ web/dist
 
 # Local dev script artifacts
 .deploywerk-dev.pids
+.deploywerk-dev.mode
 .deploywerk-logs/
+.deploywerk-git-cache/
+.deploywerk-volumes/

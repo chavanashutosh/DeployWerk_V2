@@ -1,7 +1,12 @@
-# Local stack: Postgres + API + web (nginx). From repo root:
-#   ./scripts/deploywerk-dev.sh run
-# Optional Authentik (OIDC/SCIM): ./scripts/deploywerk-dev.sh run --authentik
+# Local stack from repo root:
+#   ./scripts/deploywerk-dev.sh run        — default: Postgres + MinIO in Docker; API + Vite on host
+#   ./scripts/deploywerk-dev.sh run --docker — full stack (api + web + deps) in Docker
+# Optional OIDC: add --authentik to either command.
 # Set AUTHENTIK_SECRET_KEY and AUTHENTIK_POSTGRES_PASSWORD in .env (see .env.example).
+#
+# Host port map (avoid clashes with Authentik + common tools):
+#   MinIO API/console: 19000->9000, 19001->9001 (internal service URLs stay http://minio:9000).
+#   Authentik HTTP/HTTPS: 9000->9000, 9445->9443 (9443 is often used by Portainer on the host).
 
 services:
   postgres:
@@ -35,15 +40,23 @@ services:
       MINIO_ROOT_USER: ${DEPLOYWERK_MINIO_ROOT_USER:-deploywerk}
       MINIO_ROOT_PASSWORD: ${DEPLOYWERK_MINIO_ROOT_PASSWORD:-deploywerk-dev-only-change-me}
     ports:
-      - "9000:9000"
-      - "9001:9001"
+      - "19000:9000"
+      - "19001:9001"
     volumes:
       - deploywerk_minio_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:9000/minio/health/live"]
+      interval: 2s
+      timeout: 5s
+      retries: 15
+      start_period: 5s
 
   minio-init:
     image: minio/mc:latest
+    restart: "no"
     depends_on:
-      - minio
+      minio:
+        condition: service_healthy
     environment:
       DEPLOYWERK_MINIO_ROOT_USER: ${DEPLOYWERK_MINIO_ROOT_USER:-deploywerk}
       DEPLOYWERK_MINIO_ROOT_PASSWORD: ${DEPLOYWERK_MINIO_ROOT_PASSWORD:-deploywerk-dev-only-change-me}
@@ -61,6 +74,8 @@ services:
     restart: unless-stopped
     ports:
       - "8080:8080"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     env_file:
       - .env
     environment:
@@ -85,9 +100,9 @@ services:
       postgres:
         condition: service_healthy
       minio:
-        condition: service_started
+        condition: service_healthy
       minio-init:
-        condition: service_started
+        condition: service_completed_successfully
 
   web:
     build:
@@ -140,7 +155,7 @@ services:
       AUTHENTIK_POSTGRESQL__PASSWORD: ${AUTHENTIK_POSTGRES_PASSWORD:-authentik}
     ports:
       - "9000:9000"
-      - "9443:9443"
+      - "9445:9443"
     depends_on:
       authentik-postgresql:
         condition: service_healthy
