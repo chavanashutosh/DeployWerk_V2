@@ -51,6 +51,14 @@ http:
         certResolver: le
       service: orbytals-deploywerk-nginx
 
+    orbytals-cockpit:
+      rule: Host(`cockpit.orbytals.com`)
+      entryPoints:
+        - websecure
+      tls:
+        certResolver: le
+      service: orbytals-cockpit
+
   middlewares:
     orbytals-www-to-apex:
       redirectRegex:
@@ -68,3 +76,13 @@ http:
       loadBalancer:
         servers:
           - url: "http://172.17.0.1:8085"
+
+    orbytals-cockpit:
+      loadBalancer:
+        serversTransport: cockpit-insecure-transport
+        servers:
+          - url: "https://172.17.0.1:9090"
+
+  serversTransports:
+    cockpit-insecure-transport:
+      insecureSkipVerify: true

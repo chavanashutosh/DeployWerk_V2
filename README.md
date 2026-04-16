@@ -247,13 +247,21 @@ TLS is usually **Traefik ACME**, not certbot on the loopback nginx.
 
 ### Orbytals edge example (Ubuntu)
 
-Example Traefik layout (`traefik/` + `traefik-labels/`) for **orbytals.com** / **hermesapp.live** lives under [examples/orbytals-traefik-edge](examples/orbytals-traefik-edge). On the server, install it under a single root such as **`/opt/orbytals/edge`** (the script default). Fresh host: run [scripts/server-bootstrap-orbytals.sh](scripts/server-bootstrap-orbytals.sh) first (Docker, external **`proxy`** network, `/opt/traefik/acme/acme.json`), then from a clone of this repo:
+Example Traefik layout (`traefik/` + `traefik-labels/`) for **orbytals.com** / **hermesapp.live** lives under [examples/orbytals-traefik-edge](examples/orbytals-traefik-edge). On the server, install it under a single root such as **`/opt/orbytals/edge`** (the script default). Fresh Ubuntu 24 host: run [scripts/server-bootstrap-orbytals.sh](scripts/server-bootstrap-orbytals.sh) first (Docker, Cockpit, nginx/PostgreSQL prereqs, external **`proxy`** network, `/opt/traefik/acme/acme.json`), then from a clone of this repo:
 
 ```bash
-sudo bash scripts/traefik-edge-migrate-orbytals.sh all
+sudo bash scripts/server-bootstrap-orbytals.sh
+sudo bash scripts/traefik-edge-migrate-orbytals.sh install
+sudo bash scripts/traefik-edge-migrate-orbytals.sh stop-legacy
+sudo bash scripts/traefik-edge-migrate-orbytals.sh up
+sudo bash scripts/traefik-edge-migrate-orbytals.sh native-deploywerk-install
+sudo bash scripts/traefik-edge-migrate-orbytals.sh mailcow-install
+sudo bash scripts/traefik-edge-migrate-orbytals.sh minio-bootstrap
+sudo bash scripts/traefik-edge-migrate-orbytals.sh apply-labels
+sudo bash scripts/traefik-edge-migrate-orbytals.sh verify
 ```
 
-Override paths with `EDGE_ROOT`, `SOURCE_TREE`, and optional `MAILCOW_DIR`, `TECHNITIUM_COMPOSE_DIR`, `FORGEJO_APP_INI` / `FORGEJO_DATA_DIR`, `SYNAPSE_HOMESERVER_YAML` / `SYNAPSE_DATA_DIR` — see the header comment in [scripts/traefik-edge-migrate-orbytals.sh](scripts/traefik-edge-migrate-orbytals.sh). Match DeployWerk to the same Docker network name as Traefik (example stack uses **`proxy`**: set `DEPLOYWERK_TRAEFIK_DOCKER_NETWORK=proxy`).
+Override paths with `EDGE_ROOT`, `SOURCE_TREE`, `MAILCOW_DIR`, `DEPLOYWERK_ENV_FILE`, and optional `TECHNITIUM_COMPOSE_DIR`, `FORGEJO_APP_INI` / `FORGEJO_DATA_DIR`, `SYNAPSE_HOMESERVER_YAML` / `SYNAPSE_DATA_DIR` — see the header comment in [scripts/traefik-edge-migrate-orbytals.sh](scripts/traefik-edge-migrate-orbytals.sh). Match DeployWerk to the same Docker network name as Traefik (example stack uses **`proxy`**: set `DEPLOYWERK_TRAEFIK_DOCKER_NETWORK=proxy`). The same script also writes the native nginx/systemd DeployWerk install, a Mailcow Traefik override, and an idempotent MinIO bucket bootstrap.
 
 ---
 
@@ -333,7 +341,7 @@ Prepend your public API origin. Secrets: see [.env.example](.env.example).
 
 ## Firewall bootstrap script
 
-[scripts/server-bootstrap-orbytals.sh](scripts/server-bootstrap-orbytals.sh) installs base packages, Docker, UFW holes for mail/Matrix/DNS — use as a **starting point**, then finish Traefik/Mailcow/Matrix/DNS per your stack.
+[scripts/server-bootstrap-orbytals.sh](scripts/server-bootstrap-orbytals.sh) installs base packages, Docker, Cockpit, Node.js 22, nginx/PostgreSQL build prerequisites, and UFW holes for mail/Matrix/DNS. Use it as the host bootstrap before the Orbytals migration script.
 
 ---
 
