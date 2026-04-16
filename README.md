@@ -64,20 +64,14 @@ Use `GET /api/v1/bootstrap` and **Team → Integrations** for link slots. Set `D
 
 ## Quick start (local development)
 
-**Requirements:** Docker Compose v2, repo-root `.env` (from [.env.example](.env.example)), **Rust (`cargo`)** and **Node/npm** on PATH for the default flow. Use Git Bash or WSL on Windows (this script is bash).
+**Requirements:** Docker Compose v2, repo-root `.env` (from [.env.example](.env.example)), **Rust (`cargo`)** and **Node/npm** on PATH.
 
-**Default — native API + Vite** ([`scripts/deploywerk-dev.sh`](scripts/deploywerk-dev.sh)): Docker runs **Postgres**, **MinIO**, and **minio-init** only. The script starts **deploywerk-api** with `cargo run` and the UI with `npm run dev` in `web/`, with `DATABASE_URL` and MinIO pointed at the published host ports (**5432**, **19000**). Git cache and deploy volumes use repo-local `.deploywerk-git-cache/` and `.deploywerk-volumes/`.
-
-**Full stack in Docker** (optional): same script with **`--docker`** builds and runs **api** + **web** containers plus deps (matches old behavior). Use **`--authentik`** with either mode for OIDC services in Compose.
+**Default local dev:** run **Postgres**, **MinIO**, and optional **Authentik** in Docker; run **deploywerk-api** and Vite on the host. Git cache and deploy volumes use repo-local `.deploywerk-git-cache/` and `.deploywerk-volumes/`.
 
 ```bash
-chmod +x scripts/deploywerk-dev.sh
-./scripts/deploywerk-dev.sh run                    # native API + Vite; Postgres + MinIO in Docker
-./scripts/deploywerk-dev.sh run --authentik        # same + Authentik in Docker
-./scripts/deploywerk-dev.sh run --docker           # everything in Docker (api + web + deps)
-./scripts/deploywerk-dev.sh run --docker --authentik
-./scripts/deploywerk-dev.sh stop                   # reads last run mode from .deploywerk-dev.mode
-./scripts/deploywerk-dev.sh clean                  # removes containers/volumes; add --rmi-local to prune images
+docker compose up -d postgres minio minio-init
+cargo run -p deploywerk-api --bin deploywerk-api
+cd web && npm install && npm run dev
 ```
 
 | URL / port | Role |
@@ -87,11 +81,7 @@ chmod +x scripts/deploywerk-dev.sh
 | http://127.0.0.1:19000 / 19001 | MinIO S3 API / console on host |
 | 5432 | Postgres on host |
 
-**`.env` for `run --docker`:** use Minio at `http://minio:9000` and **`host.docker.internal`** for host integrations (see [.env.example](.env.example)). **Native default** overrides DB and storage in the script; keep other keys in `.env`.
-
-**Manual host dev** (without the script): `docker compose up -d postgres minio minio-init`, then `cargo run -p deploywerk-api --bin deploywerk-api` and `cd web && npm install && npm run dev` (Vite proxies `/api`; see [web/vite.config.ts](web/vite.config.ts)).
-
-**Windows (PowerShell) without bash:** `docker compose up -d postgres minio minio-init` then start API and Vite as above, or use WSL/Git Bash for the script.
+**Windows (PowerShell) without bash:** `docker compose up -d postgres minio minio-init` then start API and Vite as above.
 
 ### Web `/api` returns 404
 
@@ -103,8 +93,9 @@ chmod +x scripts/deploywerk-dev.sh
 
 ### Logs
 
-- **Native default:** `tail -f .deploywerk-logs/api.log .deploywerk-logs/web.log`
-- **Full Docker (`--docker`):** `docker compose logs -f api web` (add `--profile authentik` when used)
+- Host API: terminal output from `cargo run`
+- Vite UI: terminal output from `npm run dev`
+- Docker services: `docker compose logs -f postgres minio minio-init`
 
 ### Migrations and demo data
 
@@ -117,7 +108,7 @@ Migrations run when the API starts. Demo users load when `SEED_DEMO_USERS=true` 
 In [docker-compose.yml](docker-compose.yml), Authentik is published on **9000** (HTTP) and **9445** (HTTPS, container `9443`) so MinIO can use **19000/19001** on the host and **9443** stays free for tools like Portainer.
 
 1. Set `AUTHENTIK_SECRET_KEY` and `AUTHENTIK_POSTGRES_PASSWORD` in `.env` (see [.env.example](.env.example)).
-2. `./scripts/deploywerk-dev.sh run --authentik` (native API + Authentik in Docker) or `docker compose --profile authentik up -d --build` / `./scripts/deploywerk-dev.sh run --docker --authentik` (full stack in Docker)
+2. `docker compose --profile authentik up -d`
 3. Wait: `curl -sf http://127.0.0.1:9000/-/health/live/`
 4. Open **https://127.0.0.1:9445/** or http://127.0.0.1:9000/if/admin/ — complete installer (browser may warn on self-signed TLS).
 5. Create OAuth2/OpenID provider + application in Authentik; copy issuer URL.
@@ -245,23 +236,94 @@ TLS is usually **Traefik ACME**, not certbot on the loopback nginx.
 - SMTP via Mailcow: `DEPLOYWERK_SMTP_*`
 - Platform Docker + Traefik labels: `DEPLOYWERK_PLATFORM_DOCKER_ENABLED`, `DEPLOYWERK_EDGE_MODE=traefik`, `DEPLOYWERK_TRAEFIK_DOCKER_NETWORK`, `DEPLOYWERK_APPS_BASE_DOMAIN`
 
-### Orbytals edge example (Ubuntu)
+### Orbytals one-script installer (Ubuntu)
 
-Example Traefik layout (`traefik/` + `traefik-labels/`) for **orbytals.com** / **hermesapp.live** lives under [examples/orbytals-traefik-edge](examples/orbytals-traefik-edge). On the server, install it under a single root such as **`/opt/orbytals/edge`** (the script default). Fresh Ubuntu 24 host: run [scripts/server-bootstrap-orbytals.sh](scripts/server-bootstrap-orbytals.sh) first (Docker, Cockpit, nginx/PostgreSQL prereqs, external **`proxy`** network, `/opt/traefik/acme/acme.json`), then from a clone of this repo:
+The supported production installer is now [scripts/orbytals-install.sh](scripts/orbytals-install.sh). It provisions the Ubuntu 24 host and wires the Orbytals stack together behind Traefik:
+
+- Traefik
+- DeployWerk (native `systemd` + loopback `nginx`)
+- Mailcow / webmail
+- Forgejo
+- Synapse / Matrix
+- Technitium DNS
+- Cockpit
+- MinIO bucket bootstrap
+
+Run it from a clone of this repo:
 
 ```bash
-sudo bash scripts/server-bootstrap-orbytals.sh
-sudo bash scripts/traefik-edge-migrate-orbytals.sh install
-sudo bash scripts/traefik-edge-migrate-orbytals.sh stop-legacy
-sudo bash scripts/traefik-edge-migrate-orbytals.sh up
-sudo bash scripts/traefik-edge-migrate-orbytals.sh native-deploywerk-install
-sudo bash scripts/traefik-edge-migrate-orbytals.sh mailcow-install
-sudo bash scripts/traefik-edge-migrate-orbytals.sh minio-bootstrap
-sudo bash scripts/traefik-edge-migrate-orbytals.sh apply-labels
-sudo bash scripts/traefik-edge-migrate-orbytals.sh verify
+sudo bash scripts/orbytals-install.sh all
 ```
 
-Override paths with `EDGE_ROOT`, `SOURCE_TREE`, `MAILCOW_DIR`, `DEPLOYWERK_ENV_FILE`, and optional `TECHNITIUM_COMPOSE_DIR`, `FORGEJO_APP_INI` / `FORGEJO_DATA_DIR`, `SYNAPSE_HOMESERVER_YAML` / `SYNAPSE_DATA_DIR` — see the header comment in [scripts/traefik-edge-migrate-orbytals.sh](scripts/traefik-edge-migrate-orbytals.sh). Match DeployWerk to the same Docker network name as Traefik (example stack uses **`proxy`**: set `DEPLOYWERK_TRAEFIK_DOCKER_NETWORK=proxy`). The same script also writes the native nginx/systemd DeployWerk install, a Mailcow Traefik override, and an idempotent MinIO bucket bootstrap.
+The script prompts interactively for operator credentials and stores its managed runtime state under `/etc/orbytals`. Re-runs are intended to be idempotent.
+
+Useful follow-up commands:
+
+```bash
+sudo bash scripts/orbytals-install.sh verify
+sudo bash scripts/orbytals-install.sh clean
+```
+
+Managed install roots default to:
+
+- `/opt/orbytals/edge`
+- `/opt/orbytals/services`
+- `/opt/mailcow-dockerized`
+- `/etc/deploywerk/deploywerk.env`
+
+The installer assumes public DNS already points the following names at the Traefik host:
+
+- `app.orbytals.com`
+- `api.orbytals.com`
+- `mail.orbytals.com`
+- `git.orbytals.com`
+- `dns.orbytals.com`
+- `traefik.orbytals.com`
+- `cockpit.orbytals.com`
+- `chat.hermesapp.live`
+
+### Ports
+
+Public inbound ports opened by the installer by default:
+
+| Port | Protocol | Service |
+|------|----------|---------|
+| `22` | TCP | SSH |
+| `80` | TCP | Traefik HTTP / ACME |
+| `443` | TCP | Traefik HTTPS |
+| `25` | TCP | Mailcow SMTP |
+| `465` | TCP | Mailcow SMTPS |
+| `587` | TCP | Mailcow submission |
+| `110` | TCP | Mailcow POP3 |
+| `995` | TCP | Mailcow POP3S |
+| `143` | TCP | Mailcow IMAP |
+| `993` | TCP | Mailcow IMAPS |
+| `4190` | TCP | Mailcow ManageSieve |
+| `53` | TCP/UDP | Technitium DNS |
+| `8448` | TCP | Matrix federation |
+
+Loopback-only host ports used by the installer:
+
+| Port | Protocol | Service |
+|------|----------|---------|
+| `8080` | TCP | DeployWerk API |
+| `8085` | TCP | DeployWerk nginx |
+| `8082` | TCP | Mailcow HTTP binding for Traefik |
+| `8444` | TCP | Mailcow HTTPS binding for host-local use |
+| `9090` | TCP | Cockpit host socket, proxied by Traefik by default |
+| `19000` | TCP | MinIO S3 API |
+| `19001` | TCP | MinIO console |
+| `5380` | TCP | Technitium web UI, proxied by Traefik |
+
+Container-exposed or service-specific ports:
+
+| Port | Protocol | Service |
+|------|----------|---------|
+| `2222` | TCP | Forgejo SSH |
+| `3000` | TCP | Forgejo HTTP inside Docker network |
+| `8008` | TCP | Synapse HTTP inside Docker network |
+
+The installer keeps Cockpit direct `9090` access blocked by UFW unless `OPEN_COCKPIT_PORT=true` is explicitly set.
 
 ---
 
@@ -339,9 +401,16 @@ Prepend your public API origin. Secrets: see [.env.example](.env.example).
 
 ---
 
-## Firewall bootstrap script
+## Installer notes
 
-[scripts/server-bootstrap-orbytals.sh](scripts/server-bootstrap-orbytals.sh) installs base packages, Docker, Cockpit, Node.js 22, nginx/PostgreSQL build prerequisites, and UFW holes for mail/Matrix/DNS. Use it as the host bootstrap before the Orbytals migration script.
+[scripts/orbytals-install.sh](scripts/orbytals-install.sh) performs host bootstrap itself: packages, Docker, Cockpit, Node.js 22, Rust, nginx/PostgreSQL prerequisites, Traefik, and the managed application/service stacks.
+
+Cockpit-specific behavior in the installer:
+
+- installs `cockpit-storaged`, `udisks2-lvm2`, `udisks2-iscsi`, and `udisks2-btrfs` for storage support
+- installs `cockpit-packagekit` and `packagekit` for software updates
+- enables `NetworkManager` by default for Cockpit update support on Ubuntu server
+- exposes Cockpit primarily through `https://cockpit.orbytals.com`
 
 ---
 

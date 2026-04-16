@@ -1,0 +1,1034 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+SOURCE_TREE="${SOURCE_TREE:-${REPO_ROOT}/examples/orbytals-traefik-edge}"
+
+INSTALL_ROOT="${INSTALL_ROOT:-/opt/orbytals}"
+EDGE_ROOT="${EDGE_ROOT:-${INSTALL_ROOT}/edge}"
+SERVICE_ROOT="${SERVICE_ROOT:-${INSTALL_ROOT}/services}"
+STATE_DIR="${STATE_DIR:-/etc/orbytals}"
+STATE_FILE="${STATE_FILE:-${STATE_DIR}/install.env}"
+
+TRAEFIK_PUBLIC_NETWORK="${TRAEFIK_PUBLIC_NETWORK:-proxy}"
+TRAEFIK_CONTAINER_NAME="${TRAEFIK_CONTAINER_NAME:-traefik}"
+
+ORBYTALS_APEX_DOMAIN="${ORBYTALS_APEX_DOMAIN:-orbytals.com}"
+ORBYTALS_APP_DOMAIN="${ORBYTALS_APP_DOMAIN:-app.orbytals.com}"
+ORBYTALS_API_DOMAIN="${ORBYTALS_API_DOMAIN:-api.orbytals.com}"
+ORBYTALS_MAIL_DOMAIN="${ORBYTALS_MAIL_DOMAIN:-mail.orbytals.com}"
+ORBYTALS_GIT_DOMAIN="${ORBYTALS_GIT_DOMAIN:-git.orbytals.com}"
+ORBYTALS_DNS_DOMAIN="${ORBYTALS_DNS_DOMAIN:-dns.orbytals.com}"
+ORBYTALS_TRAEFIK_DOMAIN="${ORBYTALS_TRAEFIK_DOMAIN:-traefik.orbytals.com}"
+ORBYTALS_COCKPIT_DOMAIN="${ORBYTALS_COCKPIT_DOMAIN:-cockpit.orbytals.com}"
+HERMES_CHAT_DOMAIN="${HERMES_CHAT_DOMAIN:-chat.hermesapp.live}"
+
+DEPLOYWERK_USER="${DEPLOYWERK_USER:-deploywerk}"
+DEPLOYWERK_HOME="${DEPLOYWERK_HOME:-/var/lib/deploywerk}"
+DEPLOYWERK_STATE_ROOT="${DEPLOYWERK_STATE_ROOT:-/var/lib/deploywerk}"
+DEPLOYWERK_ENV_FILE="${DEPLOYWERK_ENV_FILE:-/etc/deploywerk/deploywerk.env}"
+DEPLOYWERK_WEB_ROOT="${DEPLOYWERK_WEB_ROOT:-/var/www/deploywerk}"
+DEPLOYWERK_API_BIN="${DEPLOYWERK_API_BIN:-/usr/local/bin/deploywerk-api}"
+DEPLOYWERK_WORKER_BIN="${DEPLOYWERK_WORKER_BIN:-/usr/local/bin/deploywerk-deploy-worker}"
+DEPLOYWERK_API_SERVICE_FILE="${DEPLOYWERK_API_SERVICE_FILE:-/etc/systemd/system/deploywerk-api.service}"
+DEPLOYWERK_WORKER_SERVICE_FILE="${DEPLOYWERK_WORKER_SERVICE_FILE:-/etc/systemd/system/deploywerk-deploy-worker.service}"
+DEPLOYWERK_NGINX_SITE="${DEPLOYWERK_NGINX_SITE:-/etc/nginx/sites-available/deploywerk.conf}"
+DEPLOYWERK_NGINX_ENABLED_SITE="${DEPLOYWERK_NGINX_ENABLED_SITE:-/etc/nginx/sites-enabled/deploywerk.conf}"
+DEPLOYWERK_LOOPBACK_HOST="${DEPLOYWERK_LOOPBACK_HOST:-127.0.0.1}"
+DEPLOYWERK_API_PORT="${DEPLOYWERK_API_PORT:-8080}"
+DEPLOYWERK_NGINX_PORT="${DEPLOYWERK_NGINX_PORT:-8085}"
+DEPLOYWERK_DB_NAME="${DEPLOYWERK_DB_NAME:-deploywerk}"
+DEPLOYWERK_DB_USER="${DEPLOYWERK_DB_USER:-deploywerk}"
+DEPLOYWERK_DB_PASSWORD="${DEPLOYWERK_DB_PASSWORD:-deploywerk}"
+
+MAILCOW_DIR="${MAILCOW_DIR:-/opt/mailcow-dockerized}"
+MAILCOW_CLONE_URL="${MAILCOW_CLONE_URL:-https://github.com/mailcow/mailcow-dockerized}"
+MAILCOW_BRANCH="${MAILCOW_BRANCH:-master}"
+MAILCOW_HTTP_BIND="${MAILCOW_HTTP_BIND:-127.0.0.1}"
+MAILCOW_HTTP_PORT="${MAILCOW_HTTP_PORT:-8082}"
+MAILCOW_HTTPS_BIND="${MAILCOW_HTTPS_BIND:-127.0.0.1}"
+MAILCOW_HTTPS_PORT="${MAILCOW_HTTPS_PORT:-8444}"
+MAILCOW_TRAEFIK_OVERRIDE_FILE="${MAILCOW_TRAEFIK_OVERRIDE_FILE:-docker-compose.orbytals-traefik.yml}"
+
+MINIO_DIR="${MINIO_DIR:-${SERVICE_ROOT}/minio}"
+MINIO_COMPOSE_FILE="${MINIO_COMPOSE_FILE:-${MINIO_DIR}/docker-compose.yml}"
+MINIO_ALIAS_NAME="${MINIO_ALIAS_NAME:-local}"
+MINIO_API_PORT="${MINIO_API_PORT:-19000}"
+MINIO_CONSOLE_PORT="${MINIO_CONSOLE_PORT:-19001}"
+MINIO_ENDPOINT_URL="${MINIO_ENDPOINT_URL:-http://127.0.0.1:${MINIO_API_PORT}}"
+MINIO_ROOT_USER="${MINIO_ROOT_USER:-deploywerk}"
+MINIO_ROOT_PASSWORD="${MINIO_ROOT_PASSWORD:-deploywerk-dev-only-change-me}"
+MINIO_BUCKET_NAME="${MINIO_BUCKET_NAME:-deploywerk}"
+
+FORGEJO_DIR="${FORGEJO_DIR:-${SERVICE_ROOT}/forgejo}"
+FORGEJO_COMPOSE_FILE="${FORGEJO_COMPOSE_FILE:-${FORGEJO_DIR}/docker-compose.yml}"
+FORGEJO_HTTP_PORT="${FORGEJO_HTTP_PORT:-3000}"
+FORGEJO_SSH_PORT="${FORGEJO_SSH_PORT:-2222}"
+
+SYNAPSE_DIR="${SYNAPSE_DIR:-${SERVICE_ROOT}/synapse}"
+SYNAPSE_COMPOSE_FILE="${SYNAPSE_COMPOSE_FILE:-${SYNAPSE_DIR}/docker-compose.yml}"
+SYNAPSE_CONFIG_DIR="${SYNAPSE_CONFIG_DIR:-${SYNAPSE_DIR}/data}"
+SYNAPSE_SERVICE_NAME="${SYNAPSE_SERVICE_NAME:-synapse}"
+SYNAPSE_HTTP_PORT="${SYNAPSE_HTTP_PORT:-8008}"
+
+TECHNITIUM_DIR="${TECHNITIUM_DIR:-${SERVICE_ROOT}/technitium}"
+TECHNITIUM_COMPOSE_FILE="${TECHNITIUM_COMPOSE_FILE:-${TECHNITIUM_DIR}/docker-compose.yml}"
+TECHNITIUM_HTTP_PORT="${TECHNITIUM_HTTP_PORT:-5380}"
+
+OPEN_COCKPIT_PORT="${OPEN_COCKPIT_PORT:-false}"
+INSTALL_XRDP="${INSTALL_XRDP:-false}"
+ENABLE_PUBLIC_MAIL_PORTS="${ENABLE_PUBLIC_MAIL_PORTS:-true}"
+ENABLE_PUBLIC_DNS_PORTS="${ENABLE_PUBLIC_DNS_PORTS:-true}"
+ENABLE_PUBLIC_MATRIX_FEDERATION_PORT="${ENABLE_PUBLIC_MATRIX_FEDERATION_PORT:-true}"
+COCKPIT_USE_NETWORKMANAGER="${COCKPIT_USE_NETWORKMANAGER:-true}"
+
+die() {
+  echo "error: $*" >&2
+  exit 1
+}
+
+log() {
+  echo "== $* =="
+}
+
+require_root() {
+  [[ "${EUID}" -eq 0 ]] || die "run as root"
+}
+
+command_exists() {
+  command -v "$1" >/dev/null 2>&1
+}
+
+ensure_dir() {
+  mkdir -p "$@"
+}
+
+ensure_env_kv() {
+  local file="$1" key="$2" val="$3"
+  ensure_dir "$(dirname "$file")"
+  touch "$file"
+  local tmp
+  tmp="$(mktemp)"
+  grep -v "^${key}=" "$file" >"$tmp" 2>/dev/null || true
+  printf '%s=%s\n' "$key" "$val" >>"$tmp"
+  mv "$tmp" "$file"
+}
+
+env_value() {
+  local file="$1" key="$2"
+  [[ -f "$file" ]] || return 0
+  awk -F= -v key="$key" '$1 == key {sub(/^[^=]*=/, "", $0); print $0}' "$file" | tail -n 1
+}
+
+ensure_conf_kv() {
+  local file="$1" key="$2" val="$3"
+  ensure_dir "$(dirname "$file")"
+  touch "$file"
+  local tmp
+  tmp="$(mktemp)"
+  grep -v "^${key}=" "$file" >"$tmp" 2>/dev/null || true
+  printf '%s=%s\n' "$key" "$val" >>"$tmp"
+  mv "$tmp" "$file"
+}
+
+generate_jwt_secret() {
+  openssl rand -base64 48 | tr -d '\n'
+}
+
+generate_hex32() {
+  openssl rand -hex 32 | tr -d '\n'
+}
+
+generate_alpha_secret() {
+  openssl rand -hex 24 | tr -d '\n'
+}
+
+load_state() {
+  if [[ -f "${STATE_FILE}" ]]; then
+    # shellcheck disable=SC1090
+    source "${STATE_FILE}"
+  fi
+}
+
+save_state_var() {
+  local key="$1" val="$2"
+  ensure_env_kv "${STATE_FILE}" "$key" "$val"
+  chmod 600 "${STATE_FILE}"
+  export "${key}=${val}"
+}
+
+prompt_with_default() {
+  local var_name="$1" prompt="$2" default="${3:-}"
+  local current="${!var_name:-$default}"
+  if [[ -n "$current" ]]; then
+    printf "%s [%s]: " "$prompt" "$current" >&2
+  else
+    printf "%s: " "$prompt" >&2
+  fi
+  local answer
+  IFS= read -r answer || true
+  if [[ -z "$answer" ]]; then
+    answer="$current"
+  fi
+  [[ -n "$answer" ]] || die "$var_name is required"
+  save_state_var "$var_name" "$answer"
+}
+
+prompt_secret() {
+  local var_name="$1" prompt="$2"
+  if [[ -n "${!var_name:-}" ]]; then
+    save_state_var "$var_name" "${!var_name}"
+    return
+  fi
+  [[ -t 0 ]] || die "$var_name is missing and no TTY is available"
+  local first second
+  while true; do
+    read -r -s -p "${prompt}: " first
+    echo >&2
+    read -r -s -p "Confirm ${prompt}: " second
+    echo >&2
+    [[ -n "$first" ]] || { echo "Value cannot be empty." >&2; continue; }
+    [[ "$first" == "$second" ]] || { echo "Values do not match." >&2; continue; }
+    save_state_var "$var_name" "$first"
+    break
+  done
+}
+
+maybe_generate_state_var() {
+  local key="$1" generator="$2"
+  if [[ -z "${!key:-}" ]]; then
+    save_state_var "$key" "$($generator)"
+  fi
+}
+
+collect_inputs() {
+  load_state
+  prompt_with_default ADMIN_USERNAME "Operator username" "ashadmin"
+  prompt_secret ADMIN_PASSWORD "Operator password"
+  prompt_with_default ACME_EMAIL "Traefik ACME email" "postmaster@${ORBYTALS_APEX_DOMAIN}"
+  prompt_with_default FORGEJO_ADMIN_EMAIL "Forgejo admin email" "${ADMIN_USERNAME}@${ORBYTALS_APEX_DOMAIN}"
+  prompt_with_default MAILCOW_TIMEZONE "Mailcow timezone" "UTC"
+  prompt_with_default DEPLOYWERK_BOOTSTRAP_PLATFORM_ADMIN_EMAIL "DeployWerk bootstrap admin email" "${ADMIN_USERNAME}@${ORBYTALS_APEX_DOMAIN}"
+  prompt_with_default DEPLOYWERK_SMTP_USER_PROMPT "DeployWerk SMTP mailbox" "deploywerk@${ORBYTALS_APEX_DOMAIN}"
+  prompt_secret DEPLOYWERK_SMTP_PASSWORD_PROMPT "DeployWerk SMTP mailbox password"
+  maybe_generate_state_var DEPLOYWERK_DB_PASSWORD generate_alpha_secret
+  maybe_generate_state_var MINIO_ROOT_PASSWORD generate_alpha_secret
+  maybe_generate_state_var MINIO_ROOT_USER generate_alpha_secret
+  maybe_generate_state_var MATRIX_REGISTRATION_SHARED_SECRET generate_alpha_secret
+  maybe_generate_state_var TECHNITIUM_ADMIN_PASSWORD generate_alpha_secret
+  maybe_generate_state_var DEPLOYWERK_JWT_SECRET generate_jwt_secret
+  maybe_generate_state_var DEPLOYWERK_SERVER_KEY_ENCRYPTION_KEY generate_hex32
+}
+
+ensure_node22() {
+  if command_exists node && node --version | grep -q '^v22\.'; then
+    return
+  fi
+  log "Installing Node.js 22"
+  curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
+  apt install -y nodejs
+  command_exists node || die "node install failed"
+  node --version | grep -q '^v22\.' || die "Node.js 22 is required; current version is $(node --version)"
+}
+
+ensure_root_rustup() {
+  export CARGO_HOME="/root/.cargo"
+  export RUSTUP_HOME="/root/.rustup"
+  if [[ ! -x "${CARGO_HOME}/bin/cargo" ]]; then
+    curl https://sh.rustup.rs -sSf | sh -s -- -y --profile minimal
+  fi
+  # shellcheck disable=SC1091
+  source "${CARGO_HOME}/env"
+}
+
+configure_firewall() {
+  log "Configuring firewall"
+  ufw default deny incoming || true
+  ufw default allow outgoing || true
+  ufw allow 22/tcp || true
+  ufw allow 80/tcp || true
+  ufw allow 443/tcp || true
+
+  if [[ "${ENABLE_PUBLIC_MAIL_PORTS}" == "true" ]]; then
+    for rule in 25/tcp 465/tcp 587/tcp 110/tcp 995/tcp 143/tcp 993/tcp 4190/tcp; do
+      ufw allow "$rule" || true
+    done
+  fi
+
+  if [[ "${ENABLE_PUBLIC_DNS_PORTS}" == "true" ]]; then
+    ufw allow 53/tcp || true
+    ufw allow 53/udp || true
+  fi
+
+  if [[ "${ENABLE_PUBLIC_MATRIX_FEDERATION_PORT}" == "true" ]]; then
+    ufw allow 8448/tcp || true
+  fi
+
+  if [[ "${OPEN_COCKPIT_PORT}" == "true" ]]; then
+    ufw allow 9090/tcp || true
+  else
+    ufw deny 9090/tcp >/dev/null 2>&1 || true
+  fi
+
+  ufw --force enable || true
+}
+
+configure_cockpit_networkmanager() {
+  if [[ "${COCKPIT_USE_NETWORKMANAGER}" != "true" ]]; then
+    return
+  fi
+
+  log "Configuring NetworkManager for Cockpit updates"
+  ensure_dir /etc/NetworkManager/conf.d
+  cat >/etc/NetworkManager/conf.d/10-orbytals-managed-devices.conf <<'EOF'
+[keyfile]
+unmanaged-devices=none
+EOF
+
+  if command_exists netplan; then
+    cat >/etc/netplan/99-orbytals-networkmanager.yaml <<'EOF'
+network:
+  version: 2
+  renderer: NetworkManager
+EOF
+    netplan generate
+  fi
+
+  systemctl enable --now NetworkManager
+  systemctl restart packagekit || true
+}
+
+configure_cockpit() {
+  log "Configuring Cockpit"
+  systemctl enable --now cockpit.socket
+  systemctl enable --now packagekit || true
+  configure_cockpit_networkmanager
+}
+
+bootstrap_host() {
+  log "Installing host packages"
+  apt update
+  apt install -y \
+    ca-certificates \
+    curl \
+    git \
+    gnupg \
+    jq \
+    apache2-utils \
+    ufw \
+    fail2ban \
+    nginx \
+    postgresql \
+    postgresql-contrib \
+    build-essential \
+    pkg-config \
+    libssl-dev \
+    xz-utils \
+    cockpit \
+    cockpit-networkmanager \
+    cockpit-packagekit \
+    cockpit-pcp \
+    cockpit-storaged \
+    network-manager \
+    packagekit \
+    packagekit-tools \
+    udisks2-btrfs \
+    udisks2-iscsi \
+    udisks2-lvm2 \
+    sqlite3
+
+  ensure_node22
+  ensure_root_rustup
+
+  configure_cockpit
+  if [[ "${INSTALL_XRDP}" == "true" ]]; then
+    apt install -y xrdp
+    systemctl enable --now xrdp
+  fi
+
+  log "Installing Docker Engine"
+  if ! command_exists docker; then
+    curl -fsSL https://get.docker.com | sh
+  fi
+  systemctl enable --now docker
+
+  configure_firewall
+
+  log "Creating shared directories"
+  ensure_dir /opt/traefik/acme
+  touch /opt/traefik/acme/acme.json
+  chmod 600 /opt/traefik/acme/acme.json || true
+  ensure_dir "${INSTALL_ROOT}" "${SERVICE_ROOT}" /etc/deploywerk "${DEPLOYWERK_WEB_ROOT}" "${DEPLOYWERK_STATE_ROOT}/git-cache" "${DEPLOYWERK_STATE_ROOT}/volumes"
+
+  docker network create "${TRAEFIK_PUBLIC_NETWORK}" >/dev/null 2>&1 || true
+}
+
+disable_default_nginx_site() {
+  rm -f /etc/nginx/sites-enabled/default
+}
+
+host_gateway_ip() {
+  local gw
+  gw="$(docker network inspect bridge --format '{{(index .IPAM.Config 0).Gateway}}' 2>/dev/null || true)"
+  if [[ -n "$gw" ]]; then
+    echo "$gw"
+    return
+  fi
+  ip route | awk '/default/ {print $3; exit}'
+}
+
+copy_edge_tree() {
+  [[ -d "$SOURCE_TREE" ]] || die "SOURCE_TREE is not a directory: $SOURCE_TREE"
+  ensure_dir "$EDGE_ROOT"
+  if command_exists rsync; then
+    rsync -a "${SOURCE_TREE}/" "${EDGE_ROOT}/"
+  else
+    cp -a "${SOURCE_TREE}/." "${EDGE_ROOT}/"
+  fi
+}
+
+write_traefik_native_services() {
+  local host_gw
+  host_gw="$(host_gateway_ip)"
+  cat >"${EDGE_ROOT}/traefik/dynamic/native-services.yml" <<EOF
+http:
+  routers:
+    orbytals-api:
+      rule: Host(\`${ORBYTALS_API_DOMAIN}\`)
+      entryPoints:
+        - websecure
+      tls:
+        certResolver: le
+      service: orbytals-deploywerk-nginx
+
+    orbytals-app:
+      rule: Host(\`${ORBYTALS_APP_DOMAIN}\`) || Host(\`${ORBYTALS_APEX_DOMAIN}\`)
+      entryPoints:
+        - websecure
+      tls:
+        certResolver: le
+      service: orbytals-deploywerk-nginx
+
+    orbytals-cockpit:
+      rule: Host(\`${ORBYTALS_COCKPIT_DOMAIN}\`)
+      entryPoints:
+        - websecure
+      tls:
+        certResolver: le
+      service: orbytals-cockpit
+
+  services:
+    orbytals-deploywerk-nginx:
+      loadBalancer:
+        servers:
+          - url: "http://${host_gw}:${DEPLOYWERK_NGINX_PORT}"
+
+    orbytals-cockpit:
+      loadBalancer:
+        serversTransport: cockpit-insecure-transport
+        servers:
+          - url: "https://${host_gw}:9090"
+
+  serversTransports:
+    cockpit-insecure-transport:
+      insecureSkipVerify: true
+EOF
+}
+
+gen_dashboard_auth() {
+  local out="${EDGE_ROOT}/traefik/dynamic/dashboard-auth.yml"
+  local dash="${EDGE_ROOT}/traefik/dynamic/dashboard.yml"
+  local line esc
+  line="$(htpasswd -nbB "${ADMIN_USERNAME}" "${ADMIN_PASSWORD}")"
+  esc=${line//\'/\'\'}
+  cat >"$out" <<EOF
+http:
+  middlewares:
+    dashboard-auth:
+      basicAuth:
+        removeHeader: true
+        users:
+          - '$esc'
+EOF
+  cat >"$dash" <<EOF
+http:
+  routers:
+    traefik-dashboard-secure:
+      rule: Host(\`${ORBYTALS_TRAEFIK_DOMAIN}\`)
+      entryPoints:
+        - websecure
+      tls:
+        certResolver: le
+      middlewares:
+        - dashboard-auth
+      service: api@internal
+EOF
+}
+
+ensure_traefik_env() {
+  local envf="${EDGE_ROOT}/traefik/.env"
+  [[ -f "$envf" ]] || cp "${EDGE_ROOT}/traefik/.env.example" "$envf"
+  ensure_env_kv "$envf" ACME_EMAIL "${ACME_EMAIL}"
+  ensure_env_kv "$envf" ACME_JSON_HOST_PATH "/opt/traefik/acme/acme.json"
+}
+
+install_traefik() {
+  log "Installing Traefik edge"
+  copy_edge_tree
+  ensure_traefik_env
+  write_traefik_native_services
+  gen_dashboard_auth
+  (cd "${EDGE_ROOT}/traefik" && docker compose up -d)
+}
+
+ensure_deploywerk_user() {
+  if ! id -u "${DEPLOYWERK_USER}" >/dev/null 2>&1; then
+    useradd --system --create-home --home-dir "${DEPLOYWERK_HOME}" --shell /usr/sbin/nologin "${DEPLOYWERK_USER}"
+  fi
+  ensure_dir "${DEPLOYWERK_STATE_ROOT}/git-cache" "${DEPLOYWERK_STATE_ROOT}/volumes" "${DEPLOYWERK_WEB_ROOT}" /etc/deploywerk
+  chown -R "${DEPLOYWERK_USER}:${DEPLOYWERK_USER}" "${DEPLOYWERK_STATE_ROOT}"
+}
+
+ensure_postgres_db() {
+  systemctl enable --now postgresql
+  su - postgres -s /bin/sh -c "psql -tAc \"SELECT 1 FROM pg_roles WHERE rolname='${DEPLOYWERK_DB_USER}'\" | grep -q 1" \
+    || su - postgres -s /bin/sh -c "psql -c \"CREATE USER \\\"${DEPLOYWERK_DB_USER}\\\" WITH PASSWORD '${DEPLOYWERK_DB_PASSWORD}';\""
+  su - postgres -s /bin/sh -c "psql -tAc \"SELECT 1 FROM pg_database WHERE datname='${DEPLOYWERK_DB_NAME}'\" | grep -q 1" \
+    || su - postgres -s /bin/sh -c "createdb -O \"${DEPLOYWERK_DB_USER}\" \"${DEPLOYWERK_DB_NAME}\""
+}
+
+ensure_deploywerk_env() {
+  [[ -f "${DEPLOYWERK_ENV_FILE}" ]] || cp "${REPO_ROOT}/.env.example" "${DEPLOYWERK_ENV_FILE}"
+  ensure_env_kv "${DEPLOYWERK_ENV_FILE}" APP_ENV production
+  ensure_env_kv "${DEPLOYWERK_ENV_FILE}" HOST "${DEPLOYWERK_LOOPBACK_HOST}"
+  ensure_env_kv "${DEPLOYWERK_ENV_FILE}" PORT "${DEPLOYWERK_API_PORT}"
+  ensure_env_kv "${DEPLOYWERK_ENV_FILE}" DATABASE_URL "postgresql://${DEPLOYWERK_DB_USER}:${DEPLOYWERK_DB_PASSWORD}@127.0.0.1:5432/${DEPLOYWERK_DB_NAME}"
+  ensure_env_kv "${DEPLOYWERK_ENV_FILE}" JWT_SECRET "${DEPLOYWERK_JWT_SECRET}"
+  ensure_env_kv "${DEPLOYWERK_ENV_FILE}" SERVER_KEY_ENCRYPTION_KEY "${DEPLOYWERK_SERVER_KEY_ENCRYPTION_KEY}"
+  ensure_env_kv "${DEPLOYWERK_ENV_FILE}" DEPLOYWERK_API_URL "https://${ORBYTALS_API_DOMAIN}"
+  ensure_env_kv "${DEPLOYWERK_ENV_FILE}" DEPLOYWERK_PUBLIC_APP_URL "https://${ORBYTALS_APP_DOMAIN}"
+  ensure_env_kv "${DEPLOYWERK_ENV_FILE}" VITE_API_URL ""
+  ensure_env_kv "${DEPLOYWERK_ENV_FILE}" DEPLOYWERK_API_PROXY "http://${DEPLOYWERK_LOOPBACK_HOST}:${DEPLOYWERK_API_PORT}"
+  ensure_env_kv "${DEPLOYWERK_ENV_FILE}" DEPLOYWERK_GIT_SHA "orbytals-native"
+  ensure_env_kv "${DEPLOYWERK_ENV_FILE}" DEPLOYWERK_GIT_CACHE_ROOT "${DEPLOYWERK_STATE_ROOT}/git-cache"
+  ensure_env_kv "${DEPLOYWERK_ENV_FILE}" DEPLOYWERK_VOLUMES_ROOT "${DEPLOYWERK_STATE_ROOT}/volumes"
+  ensure_env_kv "${DEPLOYWERK_ENV_FILE}" DEPLOYWERK_DEFAULT_STORAGE_ENDPOINT_URL "${MINIO_ENDPOINT_URL}"
+  ensure_env_kv "${DEPLOYWERK_ENV_FILE}" DEPLOYWERK_DEFAULT_STORAGE_BUCKET "${MINIO_BUCKET_NAME}"
+  ensure_env_kv "${DEPLOYWERK_ENV_FILE}" DEPLOYWERK_DEFAULT_STORAGE_REGION "us-east-1"
+  ensure_env_kv "${DEPLOYWERK_ENV_FILE}" DEPLOYWERK_DEFAULT_STORAGE_PATH_STYLE "true"
+  ensure_env_kv "${DEPLOYWERK_ENV_FILE}" DEPLOYWERK_DEFAULT_STORAGE_ACCESS_KEY "${MINIO_ROOT_USER}"
+  ensure_env_kv "${DEPLOYWERK_ENV_FILE}" DEPLOYWERK_DEFAULT_STORAGE_SECRET_KEY "${MINIO_ROOT_PASSWORD}"
+  ensure_env_kv "${DEPLOYWERK_ENV_FILE}" DEPLOYWERK_PLATFORM_DOCKER_ENABLED "true"
+  ensure_env_kv "${DEPLOYWERK_ENV_FILE}" DEPLOYWERK_APPS_BASE_DOMAIN "${ORBYTALS_APEX_DOMAIN}"
+  ensure_env_kv "${DEPLOYWERK_ENV_FILE}" DEPLOYWERK_EDGE_MODE "traefik"
+  ensure_env_kv "${DEPLOYWERK_ENV_FILE}" DEPLOYWERK_TRAEFIK_DOCKER_NETWORK "${TRAEFIK_PUBLIC_NETWORK}"
+  ensure_env_kv "${DEPLOYWERK_ENV_FILE}" DEPLOYWERK_LOCAL_SERVICE_DEFAULTS "false"
+  ensure_env_kv "${DEPLOYWERK_ENV_FILE}" DEPLOYWERK_INTEGRATION_TRAEFIK_URL "https://${ORBYTALS_TRAEFIK_DOMAIN}"
+  ensure_env_kv "${DEPLOYWERK_ENV_FILE}" DEPLOYWERK_INTEGRATION_FORGEJO_URL "https://${ORBYTALS_GIT_DOMAIN}"
+  ensure_env_kv "${DEPLOYWERK_ENV_FILE}" DEPLOYWERK_INTEGRATION_TECHNITIUM_URL "https://${ORBYTALS_DNS_DOMAIN}"
+  ensure_env_kv "${DEPLOYWERK_ENV_FILE}" DEPLOYWERK_INTEGRATION_MAILCOW_URL "https://${ORBYTALS_MAIL_DOMAIN}"
+  ensure_env_kv "${DEPLOYWERK_ENV_FILE}" DEPLOYWERK_INTEGRATION_MATRIX_CLIENT_URL "https://${HERMES_CHAT_DOMAIN}"
+  ensure_env_kv "${DEPLOYWERK_ENV_FILE}" DEPLOYWERK_BOOTSTRAP_PLATFORM_ADMIN_EMAIL "${DEPLOYWERK_BOOTSTRAP_PLATFORM_ADMIN_EMAIL}"
+  ensure_env_kv "${DEPLOYWERK_ENV_FILE}" DEPLOYWERK_SMTP_HOST "127.0.0.1"
+  ensure_env_kv "${DEPLOYWERK_ENV_FILE}" DEPLOYWERK_SMTP_PORT "587"
+  ensure_env_kv "${DEPLOYWERK_ENV_FILE}" DEPLOYWERK_SMTP_USER "${DEPLOYWERK_SMTP_USER_PROMPT}"
+  ensure_env_kv "${DEPLOYWERK_ENV_FILE}" DEPLOYWERK_SMTP_PASSWORD "${DEPLOYWERK_SMTP_PASSWORD_PROMPT}"
+  ensure_env_kv "${DEPLOYWERK_ENV_FILE}" DEPLOYWERK_SMTP_FROM "DeployWerk <${DEPLOYWERK_SMTP_USER_PROMPT}>"
+  ensure_env_kv "${DEPLOYWERK_ENV_FILE}" DEPLOYWERK_SMTP_TLS "starttls"
+  ensure_env_kv "${DEPLOYWERK_ENV_FILE}" DEPLOYWERK_MAIL_ENABLED "true"
+  chmod 600 "${DEPLOYWERK_ENV_FILE}"
+}
+
+write_deploywerk_api_service() {
+  cat >"${DEPLOYWERK_API_SERVICE_FILE}" <<EOF
+[Unit]
+Description=DeployWerk API
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=${DEPLOYWERK_USER}
+Group=${DEPLOYWERK_USER}
+WorkingDirectory=${DEPLOYWERK_STATE_ROOT}
+EnvironmentFile=${DEPLOYWERK_ENV_FILE}
+ExecStart=${DEPLOYWERK_API_BIN}
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+EOF
+}
+
+write_deploywerk_worker_service() {
+  cat >"${DEPLOYWERK_WORKER_SERVICE_FILE}" <<EOF
+[Unit]
+Description=DeployWerk Deploy Worker
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=${DEPLOYWERK_USER}
+Group=${DEPLOYWERK_USER}
+WorkingDirectory=${DEPLOYWERK_STATE_ROOT}
+EnvironmentFile=${DEPLOYWERK_ENV_FILE}
+ExecStart=${DEPLOYWERK_WORKER_BIN}
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+EOF
+}
+
+write_nginx_site() {
+  cat >"${DEPLOYWERK_NGINX_SITE}" <<EOF
+server {
+  listen ${DEPLOYWERK_LOOPBACK_HOST}:${DEPLOYWERK_NGINX_PORT};
+  server_name ${ORBYTALS_APP_DOMAIN} ${ORBYTALS_API_DOMAIN} ${ORBYTALS_APEX_DOMAIN};
+  root ${DEPLOYWERK_WEB_ROOT};
+  index index.html;
+
+  location /api/ {
+    proxy_pass http://${DEPLOYWERK_LOOPBACK_HOST}:${DEPLOYWERK_API_PORT};
+    proxy_http_version 1.1;
+    proxy_set_header Host \$host;
+    proxy_set_header X-Forwarded-Host \$host;
+    proxy_set_header X-Forwarded-Proto https;
+    proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+    proxy_set_header X-Real-IP \$remote_addr;
+  }
+
+  location / {
+    try_files \$uri \$uri/ /index.html;
+  }
+}
+EOF
+  ln -snf "${DEPLOYWERK_NGINX_SITE}" "${DEPLOYWERK_NGINX_ENABLED_SITE}"
+}
+
+build_native_deploywerk() {
+  ensure_root_rustup
+  ensure_node22
+  (cd "${REPO_ROOT}" && cargo build --release -p deploywerk-api --bin deploywerk-api --bin deploywerk-deploy-worker)
+  install -m 0755 "${REPO_ROOT}/target/release/deploywerk-api" "${DEPLOYWERK_API_BIN}"
+  install -m 0755 "${REPO_ROOT}/target/release/deploywerk-deploy-worker" "${DEPLOYWERK_WORKER_BIN}"
+  (cd "${REPO_ROOT}/web" && npm ci && npm run build)
+  ensure_dir "${DEPLOYWERK_WEB_ROOT}"
+  cp -a "${REPO_ROOT}/web/dist/." "${DEPLOYWERK_WEB_ROOT}/"
+  chown -R "${DEPLOYWERK_USER}:${DEPLOYWERK_USER}" "${DEPLOYWERK_STATE_ROOT}" "${DEPLOYWERK_WEB_ROOT}"
+}
+
+install_native_deploywerk() {
+  log "Installing native DeployWerk"
+  ensure_deploywerk_user
+  ensure_postgres_db
+  ensure_deploywerk_env
+  build_native_deploywerk
+  write_deploywerk_api_service
+  write_deploywerk_worker_service
+  write_nginx_site
+  disable_default_nginx_site
+  nginx -t
+  systemctl daemon-reload
+  systemctl enable --now nginx
+  systemctl enable --now deploywerk-api
+  systemctl disable --now deploywerk-deploy-worker >/dev/null 2>&1 || true
+  systemctl restart nginx
+}
+
+write_minio_compose() {
+  ensure_dir "${MINIO_DIR}"
+  cat >"${MINIO_COMPOSE_FILE}" <<EOF
+services:
+  minio:
+    image: minio/minio:latest
+    container_name: orbytals-minio
+    command: server /data --console-address ":9001"
+    restart: unless-stopped
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+    ports:
+      - "${MINIO_API_PORT}:9000"
+      - "${MINIO_CONSOLE_PORT}:9001"
+    volumes:
+      - ${MINIO_DIR}/data:/data
+EOF
+}
+
+install_minio() {
+  log "Installing MinIO"
+  write_minio_compose
+  (cd "${MINIO_DIR}" && docker compose up -d)
+}
+
+bootstrap_minio_bucket() {
+  log "Bootstrapping MinIO bucket"
+  docker run --rm --network host minio/mc:latest /bin/sh -lc "set -eu; mc alias set ${MINIO_ALIAS_NAME} ${MINIO_ENDPOINT_URL} ${MINIO_ROOT_USER} ${MINIO_ROOT_PASSWORD} >/dev/null; mc mb --ignore-existing ${MINIO_ALIAS_NAME}/${MINIO_BUCKET_NAME} >/dev/null; echo bucket-ready"
+}
+
+write_technitium_compose() {
+  ensure_dir "${TECHNITIUM_DIR}"
+  cat >"${TECHNITIUM_COMPOSE_FILE}" <<EOF
+services:
+  technitium:
+    image: technitium/dns-server:latest
+    container_name: technitium
+    restart: unless-stopped
+    environment:
+      DNS_SERVER_DOMAIN: ${ORBYTALS_DNS_DOMAIN}
+      DNS_SERVER_ADMIN_PASSWORD: ${TECHNITIUM_ADMIN_PASSWORD}
+    ports:
+      - "53:53/udp"
+      - "53:53/tcp"
+      - "127.0.0.1:${TECHNITIUM_HTTP_PORT}:5380"
+    volumes:
+      - ${TECHNITIUM_DIR}/config:/etc/dns
+    networks:
+      - ${TRAEFIK_PUBLIC_NETWORK}
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=${TRAEFIK_PUBLIC_NETWORK}"
+      - "traefik.http.routers.technitium.rule=Host(\`${ORBYTALS_DNS_DOMAIN}\`)"
+      - "traefik.http.routers.technitium.entrypoints=websecure"
+      - "traefik.http.routers.technitium.tls.certresolver=le"
+      - "traefik.http.routers.technitium.middlewares=secure-headers@file"
+      - "traefik.http.services.technitium.loadbalancer.server.port=5380"
+
+networks:
+  ${TRAEFIK_PUBLIC_NETWORK}:
+    external: true
+EOF
+}
+
+install_technitium() {
+  log "Installing Technitium"
+  write_technitium_compose
+  (cd "${TECHNITIUM_DIR}" && docker compose up -d)
+}
+
+write_forgejo_compose() {
+  ensure_dir "${FORGEJO_DIR}/data"
+  chown -R 1000:1000 "${FORGEJO_DIR}/data" || true
+  cat >"${FORGEJO_COMPOSE_FILE}" <<EOF
+services:
+  forgejo:
+    image: codeberg.org/forgejo/forgejo:9
+    container_name: forgejo
+    restart: unless-stopped
+    environment:
+      USER_UID: 1000
+      USER_GID: 1000
+      FORGEJO__server__ROOT_URL: https://${ORBYTALS_GIT_DOMAIN}/
+      FORGEJO__server__DOMAIN: ${ORBYTALS_GIT_DOMAIN}
+      FORGEJO__server__SSH_DOMAIN: ${ORBYTALS_GIT_DOMAIN}
+      FORGEJO__server__HTTP_PORT: 3000
+      FORGEJO__server__SSH_PORT: ${FORGEJO_SSH_PORT}
+      FORGEJO__server__START_SSH_SERVER: "true"
+      FORGEJO__service__DISABLE_REGISTRATION: "false"
+    ports:
+      - "${FORGEJO_SSH_PORT}:22"
+    volumes:
+      - ${FORGEJO_DIR}/data:/data
+    networks:
+      - ${TRAEFIK_PUBLIC_NETWORK}
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=${TRAEFIK_PUBLIC_NETWORK}"
+      - "traefik.http.routers.forgejo.rule=Host(\`${ORBYTALS_GIT_DOMAIN}\`)"
+      - "traefik.http.routers.forgejo.entrypoints=websecure"
+      - "traefik.http.routers.forgejo.tls.certresolver=le"
+      - "traefik.http.routers.forgejo.middlewares=secure-headers@file"
+      - "traefik.http.services.forgejo.loadbalancer.server.port=3000"
+
+networks:
+  ${TRAEFIK_PUBLIC_NETWORK}:
+    external: true
+EOF
+}
+
+install_forgejo() {
+  log "Installing Forgejo"
+  write_forgejo_compose
+  (cd "${FORGEJO_DIR}" && docker compose up -d)
+  sleep 5
+  docker exec forgejo /usr/local/bin/forgejo admin user create \
+    --admin \
+    --username "${ADMIN_USERNAME}" \
+    --password "${ADMIN_PASSWORD}" \
+    --email "${FORGEJO_ADMIN_EMAIL}" >/dev/null 2>&1 || true
+}
+
+patch_synapse_yaml() {
+  local sy="$1"
+  cp -a "$sy" "${sy}.bak.$(date +%s)" || true
+  if grep -qE '^public_baseurl:' "$sy"; then
+    sed -i 's|^public_baseurl:.*|public_baseurl: "https://'"${HERMES_CHAT_DOMAIN}"'/"|' "$sy"
+  else
+    printf '\npublic_baseurl: "https://%s/"\n' "${HERMES_CHAT_DOMAIN}" >>"$sy"
+  fi
+  if grep -qE '^serve_server_wellknown:' "$sy"; then
+    sed -i 's|^serve_server_wellknown:.*|serve_server_wellknown: true|' "$sy"
+  else
+    printf 'serve_server_wellknown: true\n' >>"$sy"
+  fi
+  if grep -qE '^registration_shared_secret:' "$sy"; then
+    sed -i 's|^registration_shared_secret:.*|registration_shared_secret: "'"${MATRIX_REGISTRATION_SHARED_SECRET}"'"|' "$sy"
+  else
+    printf 'registration_shared_secret: "%s"\n' "${MATRIX_REGISTRATION_SHARED_SECRET}" >>"$sy"
+  fi
+}
+
+generate_synapse_config() {
+  ensure_dir "${SYNAPSE_CONFIG_DIR}"
+  if [[ ! -f "${SYNAPSE_CONFIG_DIR}/homeserver.yaml" ]]; then
+    docker run --rm \
+      -e SYNAPSE_SERVER_NAME="${HERMES_CHAT_DOMAIN}" \
+      -e SYNAPSE_REPORT_STATS=no \
+      -v "${SYNAPSE_CONFIG_DIR}:/data" \
+      matrixdotorg/synapse:latest generate
+  fi
+  patch_synapse_yaml "${SYNAPSE_CONFIG_DIR}/homeserver.yaml"
+}
+
+write_synapse_compose() {
+  ensure_dir "${SYNAPSE_DIR}"
+  cat >"${SYNAPSE_COMPOSE_FILE}" <<EOF
+services:
+  ${SYNAPSE_SERVICE_NAME}:
+    image: matrixdotorg/synapse:latest
+    container_name: ${SYNAPSE_SERVICE_NAME}
+    restart: unless-stopped
+    environment:
+      SYNAPSE_CONFIG_PATH: /data/homeserver.yaml
+    volumes:
+      - ${SYNAPSE_CONFIG_DIR}:/data
+    networks:
+      - ${TRAEFIK_PUBLIC_NETWORK}
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=${TRAEFIK_PUBLIC_NETWORK}"
+      - "traefik.http.routers.synapse.rule=Host(\`${HERMES_CHAT_DOMAIN}\`)"
+      - "traefik.http.routers.synapse.entrypoints=websecure"
+      - "traefik.http.routers.synapse.tls.certresolver=le"
+      - "traefik.http.routers.synapse.middlewares=secure-headers@file"
+      - "traefik.http.services.synapse.loadbalancer.server.port=${SYNAPSE_HTTP_PORT}"
+
+networks:
+  ${TRAEFIK_PUBLIC_NETWORK}:
+    external: true
+EOF
+}
+
+install_synapse() {
+  log "Installing Synapse"
+  generate_synapse_config
+  write_synapse_compose
+  (cd "${SYNAPSE_DIR}" && docker compose up -d)
+  sleep 5
+  docker run --rm \
+    --network "${TRAEFIK_PUBLIC_NETWORK}" \
+    -v "${SYNAPSE_CONFIG_DIR}:/data" \
+    matrixdotorg/synapse:latest \
+    register_new_matrix_user \
+      -u "${ADMIN_USERNAME}" \
+      -p "${ADMIN_PASSWORD}" \
+      -a \
+      -k "${MATRIX_REGISTRATION_SHARED_SECRET}" \
+      "http://${SYNAPSE_SERVICE_NAME}:${SYNAPSE_HTTP_PORT}" >/dev/null 2>&1 || true
+}
+
+ensure_mailcow_clone() {
+  if [[ ! -d "${MAILCOW_DIR}/.git" ]]; then
+    git clone --depth 1 --branch "${MAILCOW_BRANCH}" "${MAILCOW_CLONE_URL}" "${MAILCOW_DIR}"
+  else
+    git -C "${MAILCOW_DIR}" fetch --depth 1 origin "${MAILCOW_BRANCH}"
+    git -C "${MAILCOW_DIR}" checkout "${MAILCOW_BRANCH}"
+    git -C "${MAILCOW_DIR}" pull --ff-only origin "${MAILCOW_BRANCH}"
+  fi
+}
+
+ensure_mailcow_config() {
+  local conf="${MAILCOW_DIR}/mailcow.conf"
+  if [[ ! -f "$conf" ]]; then
+    (
+      cd "${MAILCOW_DIR}"
+      printf '%s\n' "${ORBYTALS_MAIL_DOMAIN}" | ./generate_config.sh
+    )
+  fi
+  ensure_conf_kv "$conf" MAILCOW_HOSTNAME "${ORBYTALS_MAIL_DOMAIN}"
+  ensure_conf_kv "$conf" SKIP_LETS_ENCRYPT "y"
+  ensure_conf_kv "$conf" HTTP_BIND "${MAILCOW_HTTP_BIND}"
+  ensure_conf_kv "$conf" HTTP_PORT "${MAILCOW_HTTP_PORT}"
+  ensure_conf_kv "$conf" HTTPS_BIND "${MAILCOW_HTTPS_BIND}"
+  ensure_conf_kv "$conf" HTTPS_PORT "${MAILCOW_HTTPS_PORT}"
+  ensure_conf_kv "$conf" DOCKER_COMPOSE_VERSION "native"
+  ensure_conf_kv "$conf" TZ "${MAILCOW_TIMEZONE}"
+}
+
+write_mailcow_override() {
+  cat >"${MAILCOW_DIR}/${MAILCOW_TRAEFIK_OVERRIDE_FILE}" <<EOF
+services:
+  nginx-mailcow:
+    networks:
+      traefik_edge: {}
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=${TRAEFIK_PUBLIC_NETWORK}"
+      - "traefik.http.routers.mailcow.rule=Host(\`${ORBYTALS_MAIL_DOMAIN}\`)"
+      - "traefik.http.routers.mailcow.entrypoints=websecure"
+      - "traefik.http.routers.mailcow.tls.certresolver=le"
+      - "traefik.http.routers.mailcow.middlewares=secure-headers@file"
+      - "traefik.http.services.mailcow.loadbalancer.server.port=${MAILCOW_HTTP_PORT}"
+
+networks:
+  traefik_edge:
+    name: ${TRAEFIK_PUBLIC_NETWORK}
+    external: true
+EOF
+}
+
+mailcow_compose_files() {
+  local base="${MAILCOW_DIR}/docker-compose.yml"
+  local primary_override="${MAILCOW_DIR}/docker-compose.override.yml"
+  local managed_override="${MAILCOW_DIR}/${MAILCOW_TRAEFIK_OVERRIDE_FILE}"
+  local args=(-f "$base")
+  if [[ -f "$primary_override" ]]; then
+    args+=(-f "$primary_override")
+  fi
+  args+=(-f "$managed_override")
+  printf '%s\n' "${args[@]}"
+}
+
+mailcow_compose() {
+  local args=()
+  while IFS= read -r line; do
+    args+=("$line")
+  done < <(mailcow_compose_files)
+  (cd "${MAILCOW_DIR}" && docker compose "${args[@]}" "$@")
+}
+
+install_mailcow() {
+  log "Installing Mailcow"
+  ensure_mailcow_clone
+  ensure_mailcow_config
+  write_mailcow_override
+  mailcow_compose pull
+  mailcow_compose up -d
+}
+
+show_port_status() {
+  log "Port status"
+  ss -ltnup | awk 'NR==1 || /:22 |:25 |:53 |:80 |:110 |:143 |:443 |:465 |:587 |:993 |:995 |:2222 |:8080 |:8082 |:8085 |:8444 |:8448 |:9090 |:19000 |:19001 /'
+}
+
+verify_url() {
+  local url="$1"
+  echo "---- $url"
+  if curl -fsSI --max-time 20 "$url" >/dev/null 2>&1; then
+    curl -fsSI --max-time 20 "$url"
+    return
+  fi
+  if curl -kfsSI --max-time 20 "$url" >/dev/null 2>&1; then
+    curl -kfsSI --max-time 20 "$url"
+    echo "(reachable with insecure TLS; ACME may still be pending)"
+    return
+  fi
+  echo "(failed)"
+}
+
+verify_install() {
+  show_port_status
+  verify_url "https://${ORBYTALS_APP_DOMAIN}"
+  verify_url "https://${ORBYTALS_API_DOMAIN}/api/v1/bootstrap"
+  verify_url "https://${ORBYTALS_MAIL_DOMAIN}"
+  verify_url "https://${ORBYTALS_GIT_DOMAIN}"
+  verify_url "https://${ORBYTALS_DNS_DOMAIN}"
+  verify_url "https://${ORBYTALS_TRAEFIK_DOMAIN}"
+  verify_url "https://${ORBYTALS_COCKPIT_DOMAIN}"
+  verify_url "https://${HERMES_CHAT_DOMAIN}/_matrix/client/versions"
+  verify_url "https://${HERMES_CHAT_DOMAIN}/.well-known/matrix/server"
+  verify_url "http://${DEPLOYWERK_LOOPBACK_HOST}:${DEPLOYWERK_NGINX_PORT}"
+  verify_url "http://${DEPLOYWERK_LOOPBACK_HOST}:${DEPLOYWERK_API_PORT}/api/v1/health"
+  verify_url "${MINIO_ENDPOINT_URL}/minio/health/live"
+}
+
+compose_down_if_present() {
+  local dir="$1"
+  if [[ -f "${dir}/docker-compose.yml" ]]; then
+    (cd "$dir" && docker compose down --remove-orphans) || true
+  fi
+}
+
+clean_install() {
+  log "Cleaning managed services"
+  compose_down_if_present "${EDGE_ROOT}/traefik"
+  compose_down_if_present "${MINIO_DIR}"
+  compose_down_if_present "${TECHNITIUM_DIR}"
+  compose_down_if_present "${FORGEJO_DIR}"
+  compose_down_if_present "${SYNAPSE_DIR}"
+  if [[ -d "${MAILCOW_DIR}" ]]; then
+    mailcow_compose down --remove-orphans || true
+  fi
+
+  systemctl disable --now deploywerk-api >/dev/null 2>&1 || true
+  systemctl disable --now deploywerk-deploy-worker >/dev/null 2>&1 || true
+  rm -f "${DEPLOYWERK_API_SERVICE_FILE}" "${DEPLOYWERK_WORKER_SERVICE_FILE}"
+  rm -f "${DEPLOYWERK_NGINX_ENABLED_SITE}" "${DEPLOYWERK_NGINX_SITE}"
+  systemctl daemon-reload || true
+  systemctl restart nginx >/dev/null 2>&1 || true
+
+  rm -rf "${INSTALL_ROOT}" "${MAILCOW_DIR}" "${STATE_DIR}" "${DEPLOYWERK_WEB_ROOT}"
+  docker network rm "${TRAEFIK_PUBLIC_NETWORK}" >/dev/null 2>&1 || true
+  echo "Managed Orbytals install cleaned."
+}
+
+cmd_install() {
+  require_root
+  collect_inputs
+  bootstrap_host
+  install_traefik
+  install_minio
+  bootstrap_minio_bucket
+  install_technitium
+  install_forgejo
+  install_synapse
+  install_mailcow
+  install_native_deploywerk
+}
+
+cmd_all() {
+  cmd_install
+  verify_install
+}
+
+usage() {
+  cat <<EOF
+Commands:
+  install   Install or update the full Orbytals stack
+  verify    Verify managed services and public URLs
+  clean     Remove the managed Orbytals install footprint
+  all       Install/update then verify
+
+Primary command:
+  sudo bash scripts/orbytals-install.sh all
+EOF
+}
+
+main() {
+  local sub="${1:-}"
+  case "$sub" in
+    install) shift; cmd_install "$@" ;;
+    verify) shift; verify_install "$@" ;;
+    clean) shift; clean_install "$@" ;;
+    all) shift; cmd_all "$@" ;;
+    ""|-h|--help) usage ;;
+    *) die "unknown command: $sub" ;;
+  esac
+}
+
+main "$@"

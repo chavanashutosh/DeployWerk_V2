@@ -1,8 +1,8 @@
 # Traefik edge (orbytals.com + hermesapp.live). Run from this directory:
 #   docker compose up -d
 #
-# Prerequisites: external Docker network "proxy" (see scripts/server-bootstrap-orbytals.sh
-# or scripts/traefik-edge-migrate-orbytals.sh). Attach backends (Synapse, Mailcow nginx, etc.)
+# Prerequisites: external Docker network "proxy" (or run scripts/orbytals-install.sh).
+# Attach backends (Synapse, Mailcow nginx, etc.)
 # to the same network so Docker provider labels and file-provider upstream names resolve.
 #
 # ACME: default host path /opt/traefik/acme/acme.json (created by server bootstrap). Override:

@@ -1,7 +1,7 @@
 # Local stack from repo root:
-#   ./scripts/deploywerk-dev.sh run        — default: Postgres + MinIO in Docker; API + Vite on host
-#   ./scripts/deploywerk-dev.sh run --docker — full stack (api + web + deps) in Docker
-# Optional OIDC: add --authentik to either command.
+#   docker compose up -d postgres minio minio-init
+# Optional OIDC:
+#   docker compose --profile authentik up -d
 # Set AUTHENTIK_SECRET_KEY and AUTHENTIK_POSTGRES_PASSWORD in .env (see .env.example).
 #
 # Host port map (avoid clashes with Authentik + common tools):
