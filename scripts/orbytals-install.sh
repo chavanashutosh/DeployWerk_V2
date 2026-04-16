@@ -338,9 +338,14 @@ bootstrap_host() {
     packagekit \
     packagekit-tools \
     udisks2-btrfs \
-    udisks2-iscsi \
     udisks2-lvm2 \
     sqlite3
+
+  if apt-cache show udisks2-iscsi >/dev/null 2>&1; then
+    apt install -y udisks2-iscsi
+  else
+    log "Skipping optional package udisks2-iscsi (not available in current apt sources)"
+  fi
 
   ensure_node22
   ensure_root_rustup
