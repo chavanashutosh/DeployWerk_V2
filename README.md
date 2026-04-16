@@ -440,6 +440,8 @@ docker ps --format 'table {{.Names}}\t{{.Ports}}'
 
 The most common conflict is keeping native `deploywerk-api` on `127.0.0.1:8080` while also trying to bind Traefik’s local dashboard to the same port. The installer uses `127.0.0.1:18080` for the Traefik dashboard to avoid that.
 
+For DNS specifically, host listeners such as `systemd-resolved` on `127.0.0.53` / `127.0.0.54` and libvirt-managed `dnsmasq` on `192.168.122.1:53` are treated as expected during installer preflight. A different process owning `53` still causes the installer to stop.
+
 ## Optional: remote desktop / Hestia
 
 XRDP and HestiaCP are **optional** and conflict with DeployWerk if they fight for the same **80/443** on one machine — keep separate hosts or one reverse proxy owner.

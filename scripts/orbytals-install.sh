@@ -319,6 +319,26 @@ port_listeners() {
   ss -ltnp "sport = :${port}" 2>/dev/null | awk 'NR>1 {print $0}' || true
 }
 
+dns_listener_is_expected() {
+  local listeners="$1"
+  [[ -n "${listeners}" ]] || return 1
+
+  local normalized
+  normalized="$(printf '%s' "${listeners}" | tr '[:upper:]' '[:lower:]')"
+
+  if printf '%s' "${normalized}" | grep -Eq '(systemd-resolve|systemd-resolved)'; then
+    return 0
+  fi
+
+  if printf '%s' "${normalized}" | grep -Eq 'dnsmasq'; then
+    if printf '%s' "${normalized}" | grep -Eq '(127\.0\.0\.(53|54)|192\.168\.122\.1)'; then
+      return 0
+    fi
+  fi
+
+  return 1
+}
+
 assert_port_available_or_managed() {
   local port="$1" why="$2"
   local listeners
@@ -337,6 +357,21 @@ assert_port_available_or_managed() {
   die "port conflict on ${port}"
 }
 
+assert_dns_port_available_or_expected() {
+  local listeners
+  listeners="$(port_listeners 53)"
+  if [[ -z "${listeners}" ]]; then
+    return
+  fi
+
+  if dns_listener_is_expected "${listeners}"; then
+    warn "Port 53 is already in use by expected host DNS listeners; continuing."
+    return
+  fi
+
+  assert_port_available_or_managed 53 "DNS TCP/UDP"
+}
+
 preflight_ports() {
   log "Preflight: checking for port conflicts"
   # Public ports
@@ -348,7 +383,7 @@ preflight_ports() {
     done
   fi
   if [[ "${ENABLE_PUBLIC_DNS_PORTS}" == "true" ]]; then
-    assert_port_available_or_managed 53 "DNS TCP/UDP"
+    assert_dns_port_available_or_expected
   fi
   if [[ "${ENABLE_PUBLIC_MATRIX_FEDERATION_PORT}" == "true" ]]; then
     assert_port_available_or_managed 8448 "Matrix federation"
