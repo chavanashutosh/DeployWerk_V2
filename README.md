@@ -416,6 +416,30 @@ Cockpit-specific behavior in the installer:
 
 ---
 
+## Troubleshooting (installer)
+
+### Garage bootstrap fails with Docker `409` / `unable to upgrade to tcp, received 409`
+
+This usually means the `garage` container is **not running** or is **restarting** when the installer tries to `docker exec` into it.
+
+Check:
+
+```bash
+docker ps --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}'
+docker logs garage --tail 200
+```
+
+### Port conflicts
+
+If the installer aborts on a port conflict, identify the owner:
+
+```bash
+sudo ss -ltnp | grep -E ':80 |:443 |:8080 |:18080 |:3900 |:3902 |:3903 '
+docker ps --format 'table {{.Names}}\t{{.Ports}}'
+```
+
+The most common conflict is keeping native `deploywerk-api` on `127.0.0.1:8080` while also trying to bind Traefik’s local dashboard to the same port. The installer uses `127.0.0.1:18080` for the Traefik dashboard to avoid that.
+
 ## Optional: remote desktop / Hestia
 
 XRDP and HestiaCP are **optional** and conflict with DeployWerk if they fight for the same **80/443** on one machine — keep separate hosts or one reverse proxy owner.

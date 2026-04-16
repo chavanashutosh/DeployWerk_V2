@@ -95,6 +95,10 @@ log() {
   echo "== $* =="
 }
 
+warn() {
+  echo "WARN: $*" >&2
+}
+
 require_root() {
   [[ "${EUID}" -eq 0 ]] || die "run as root"
 }
@@ -310,6 +314,60 @@ configure_cockpit() {
   configure_cockpit_networkmanager
 }
 
+port_listeners() {
+  local port="$1"
+  ss -ltnp "sport = :${port}" 2>/dev/null | awk 'NR>1 {print $0}' || true
+}
+
+assert_port_available_or_managed() {
+  local port="$1" why="$2"
+  local listeners
+  listeners="$(port_listeners "$port")"
+  if [[ -z "$listeners" ]]; then
+    return
+  fi
+  # If a rerun and the port is held by known managed processes, allow.
+  # Otherwise, fail with diagnostics.
+  if printf '%s' "$listeners" | grep -Eq '(docker-proxy|traefik|deploywerk-api|nginx|garage|forgejo|technitium|synapse|postfix|dovecot|portainer)'; then
+    warn "Port ${port} is already in use (${why}); looks like managed services. Continuing."
+    return
+  fi
+  echo "Port ${port} is already in use (${why})." >&2
+  echo "$listeners" >&2
+  die "port conflict on ${port}"
+}
+
+preflight_ports() {
+  log "Preflight: checking for port conflicts"
+  # Public ports
+  assert_port_available_or_managed 80 "Traefik HTTP"
+  assert_port_available_or_managed 443 "Traefik HTTPS"
+  if [[ "${ENABLE_PUBLIC_MAIL_PORTS}" == "true" ]]; then
+    for p in 25 465 587 110 995 143 993 4190; do
+      assert_port_available_or_managed "$p" "Mail port"
+    done
+  fi
+  if [[ "${ENABLE_PUBLIC_DNS_PORTS}" == "true" ]]; then
+    assert_port_available_or_managed 53 "DNS TCP/UDP"
+  fi
+  if [[ "${ENABLE_PUBLIC_MATRIX_FEDERATION_PORT}" == "true" ]]; then
+    assert_port_available_or_managed 8448 "Matrix federation"
+  fi
+  assert_port_available_or_managed "${FORGEJO_SSH_PORT}" "Forgejo SSH"
+
+  # Loopback-only ports
+  assert_port_available_or_managed "${TRAEFIK_DASHBOARD_LOCAL_PORT}" "Traefik local dashboard"
+  assert_port_available_or_managed "${DEPLOYWERK_API_PORT}" "DeployWerk API"
+  assert_port_available_or_managed "${DEPLOYWERK_NGINX_PORT}" "DeployWerk nginx"
+  assert_port_available_or_managed "${MAILCOW_HTTP_PORT}" "Mailcow HTTP bind"
+  assert_port_available_or_managed "${MAILCOW_HTTPS_PORT}" "Mailcow HTTPS bind"
+  assert_port_available_or_managed 9090 "Cockpit host socket"
+  assert_port_available_or_managed "${GARAGE_S3_PORT}" "Garage S3"
+  assert_port_available_or_managed "${GARAGE_WEB_PORT}" "Garage web"
+  assert_port_available_or_managed "${GARAGE_ADMIN_PORT}" "Garage admin"
+  assert_port_available_or_managed "${TECHNITIUM_HTTP_PORT}" "Technitium UI"
+}
+
 bootstrap_host() {
   log "Installing host packages"
   apt update
@@ -488,7 +546,11 @@ install_traefik() {
   ensure_traefik_env
   write_traefik_native_services
   gen_dashboard_auth
-  (cd "${EDGE_ROOT}/traefik" && docker compose up -d)
+  (cd "${EDGE_ROOT}/traefik" && docker compose up -d) || {
+    (cd "${EDGE_ROOT}/traefik" && docker compose ps) || true
+    docker logs "${TRAEFIK_CONTAINER_NAME}" --tail 200 || true
+    die "Traefik failed to start"
+  }
 }
 
 ensure_deploywerk_user() {
@@ -698,35 +760,119 @@ install_garage() {
   log "Installing Garage"
   write_garage_config
   write_garage_compose
-  (cd "${GARAGE_DIR}" && docker compose up -d)
+  (cd "${GARAGE_DIR}" && docker compose up -d) || {
+    (cd "${GARAGE_DIR}" && docker compose ps) || true
+    docker logs garage --tail 200 || true
+    die "Garage failed to start"
+  }
+}
+
+wait_for_container_running() {
+  local name="$1" timeout_s="${2:-60}"
+  local start
+  start="$(date +%s)"
+  while true; do
+    if docker inspect -f '{{.State.Running}}' "$name" 2>/dev/null | grep -q true; then
+      return 0
+    fi
+    if [[ $(( $(date +%s) - start )) -ge "$timeout_s" ]]; then
+      return 1
+    fi
+    sleep 2
+  done
+}
+
+compose_up_or_die() {
+  local dir="$1" name="$2" container_name="${3:-}"
+  (cd "${dir}" && docker compose up -d) || {
+    echo "Service ${name} failed to start." >&2
+    (cd "${dir}" && docker compose ps) >&2 || true
+    if [[ -n "${container_name}" ]]; then
+      docker logs "${container_name}" --tail 200 >&2 || true
+    fi
+    die "${name} failed to start"
+  }
+}
+
+wait_for_garage_ready() {
+  local timeout_s="${1:-120}"
+  local start
+  start="$(date +%s)"
+  while true; do
+    if docker inspect -f '{{.State.Running}}' garage 2>/dev/null | grep -q true; then
+      if docker exec garage /garage -c /etc/garage.toml status >/dev/null 2>&1; then
+        return 0
+      fi
+    fi
+    if [[ $(( $(date +%s) - start )) -ge "$timeout_s" ]]; then
+      return 1
+    fi
+    sleep 2
+  done
+}
+
+garage_cli() {
+  # Retry on transient docker exec errors (including 409) during startup.
+  local attempt=1 max_attempts=20 sleep_s=2
+  while true; do
+    if docker exec garage /garage -c /etc/garage.toml "$@" ; then
+      return 0
+    fi
+    if [[ "${attempt}" -ge "${max_attempts}" ]]; then
+      return 1
+    fi
+    attempt=$((attempt + 1))
+    sleep "${sleep_s}"
+  done
 }
 
 bootstrap_garage() {
   log "Bootstrapping Garage bucket and keys"
-  local node_id layout_state key_output key_id secret_key
-  node_id="$(docker exec garage /garage -c /etc/garage.toml status | awk '/^[0-9a-f]{8,}/ {print $1; exit}')"
+  if ! wait_for_garage_ready 180; then
+    docker ps --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}' | sed -n '1,20p' >&2 || true
+    docker logs garage --tail 250 >&2 || true
+    die "Garage did not become ready in time; cannot bootstrap"
+  fi
+
+  local status_out node_id layout_state key_output key_id secret_key
+  status_out="$(garage_cli status 2>/dev/null || true)"
+  node_id="$(printf '%s\n' "${status_out}" | awk '/^[0-9a-f]{8,}/ {print $1; exit}')"
   [[ -n "${node_id}" ]] || die "could not determine Garage node id"
 
-  layout_state="$(docker exec garage /garage -c /etc/garage.toml layout show 2>/dev/null || true)"
+  layout_state="$(garage_cli layout show 2>/dev/null || true)"
   if ! printf '%s' "${layout_state}" | grep -q "${node_id}"; then
-    docker exec garage /garage -c /etc/garage.toml layout assign -z dc1 -c 20G "${node_id}"
+    garage_cli layout assign -z dc1 -c 20G "${node_id}" >/dev/null
   fi
-  if ! printf '%s' "${layout_state}" | grep -q "applied role assignment"; then
-    docker exec garage /garage -c /etc/garage.toml layout apply --version 1 || true
+  # Apply layout if not already applied (safe on reruns).
+  if ! printf '%s\n' "${layout_state}" | grep -qi "applied"; then
+    garage_cli layout apply --version 1 >/dev/null 2>&1 || true
   fi
 
-  key_output="$(docker exec garage /garage -c /etc/garage.toml key info "${GARAGE_KEY_NAME}" 2>/dev/null || true)"
+  key_output="$(garage_cli key info "${GARAGE_KEY_NAME}" 2>/dev/null || true)"
   if [[ -z "${key_output}" ]]; then
-    key_output="$(docker exec garage /garage -c /etc/garage.toml key create "${GARAGE_KEY_NAME}")"
+    key_output="$(garage_cli key create "${GARAGE_KEY_NAME}" 2>/dev/null || true)"
   fi
   key_id="$(printf '%s\n' "${key_output}" | awk -F': ' '/Key ID/ {print $2; exit}')"
   secret_key="$(printf '%s\n' "${key_output}" | awk -F': ' '/Secret key/ {print $2; exit}')"
-  [[ -n "${key_id}" && -n "${secret_key}" ]] || die "could not extract Garage S3 credentials"
+  if [[ -z "${key_id}" || -z "${secret_key}" ]]; then
+    docker logs garage --tail 250 >&2 || true
+    die "could not extract Garage S3 credentials"
+  fi
   save_state_var GARAGE_ACCESS_KEY_ID "${key_id}"
   save_state_var GARAGE_SECRET_ACCESS_KEY "${secret_key}"
 
-  docker exec garage /garage -c /etc/garage.toml bucket create "${GARAGE_BUCKET_NAME}" >/dev/null 2>&1 || true
-  docker exec garage /garage -c /etc/garage.toml bucket allow --read --write --owner "${GARAGE_BUCKET_NAME}" --key "${GARAGE_KEY_NAME}" >/dev/null 2>&1 || true
+  if ! garage_cli bucket create "${GARAGE_BUCKET_NAME}" >/dev/null 2>&1; then
+    # Assume bucket exists on reruns; verify quickly.
+    if ! garage_cli bucket info "${GARAGE_BUCKET_NAME}" >/dev/null 2>&1; then
+      docker logs garage --tail 250 >&2 || true
+      die "Garage bucket create failed"
+    fi
+  fi
+
+  if ! garage_cli bucket allow --read --write --owner "${GARAGE_BUCKET_NAME}" --key "${GARAGE_KEY_NAME}" >/dev/null 2>&1; then
+    docker logs garage --tail 250 >&2 || true
+    die "Garage bucket allow failed"
+  fi
 }
 
 write_technitium_compose() {
@@ -766,7 +912,7 @@ EOF
 install_technitium() {
   log "Installing Technitium"
   write_technitium_compose
-  (cd "${TECHNITIUM_DIR}" && docker compose up -d)
+  compose_up_or_die "${TECHNITIUM_DIR}" "Technitium" "technitium"
 }
 
 write_forgejo_compose() {
@@ -812,13 +958,17 @@ EOF
 install_forgejo() {
   log "Installing Forgejo"
   write_forgejo_compose
-  (cd "${FORGEJO_DIR}" && docker compose up -d)
-  sleep 5
-  docker exec forgejo /usr/local/bin/forgejo admin user create \
+  compose_up_or_die "${FORGEJO_DIR}" "Forgejo" "forgejo"
+  if wait_for_container_running forgejo 60; then
+    docker exec forgejo /usr/local/bin/forgejo admin user create \
     --admin \
     --username "${ADMIN_USERNAME}" \
     --password "${ADMIN_PASSWORD}" \
     --email "${FORGEJO_ADMIN_EMAIL}" >/dev/null 2>&1 || true
+  else
+    docker logs forgejo --tail 200 >&2 || true
+    die "Forgejo container not running"
+  fi
 }
 
 patch_synapse_yaml() {
@@ -886,8 +1036,11 @@ install_synapse() {
   log "Installing Synapse"
   generate_synapse_config
   write_synapse_compose
-  (cd "${SYNAPSE_DIR}" && docker compose up -d)
-  sleep 5
+  compose_up_or_die "${SYNAPSE_DIR}" "Synapse" "${SYNAPSE_SERVICE_NAME}"
+  wait_for_container_running "${SYNAPSE_SERVICE_NAME}" 60 || {
+    docker logs "${SYNAPSE_SERVICE_NAME}" --tail 200 >&2 || true
+    die "Synapse container not running"
+  }
   docker run --rm \
     --network "${TRAEFIK_PUBLIC_NETWORK}" \
     -v "${SYNAPSE_CONFIG_DIR}:/data" \
@@ -975,8 +1128,15 @@ install_mailcow() {
   ensure_mailcow_clone
   ensure_mailcow_config
   write_mailcow_override
-  mailcow_compose pull
-  mailcow_compose up -d
+  mailcow_compose pull || {
+    mailcow_compose ps >&2 || true
+    die "Mailcow pull failed"
+  }
+  mailcow_compose up -d || {
+    mailcow_compose ps >&2 || true
+    docker logs nginx-mailcow --tail 200 >&2 || true
+    die "Mailcow failed to start"
+  }
 }
 
 show_port_status() {
@@ -1048,6 +1208,7 @@ clean_install() {
 cmd_install() {
   require_root
   collect_inputs
+  preflight_ports
   bootstrap_host
   install_traefik
   install_garage
