@@ -58,7 +58,7 @@ DeployWerk runs **natively** (systemd + API + nginx on a **loopback** port). Oth
 
 Point **Traefik** at `http://HOST_LOOPBACK:PORT` where nginx serves the SPA (e.g. `127.0.0.1:8085` or Docker bridge IP to host). See [docs/traefik/orbytals-file-provider.example.yml](docs/traefik/orbytals-file-provider.example.yml) for Matrix `/.well-known` priority over the app.
 
-Use `GET /api/v1/bootstrap` and **Team → Integrations** for link slots. Set `DEPLOYWERK_LOCAL_SERVICE_DEFAULTS=true` only when the **API process** can reach integration URLs on `127.0.0.1` (native API on the host). For **Docker Compose**, [.env.example](.env.example) uses `DEPLOYWERK_LOCAL_SERVICE_DEFAULTS=false` and explicit `DEPLOYWERK_INTEGRATION_*_URL` values with **`host.docker.internal`** so the `api` container reaches services published on the host; [docker-compose.yml](docker-compose.yml) adds `extra_hosts: host.docker.internal:host-gateway` on `api` (Linux-friendly).
+Use `GET /api/v1/bootstrap` and **Team → Integrations** for link slots. Set `DEPLOYWERK_LOCAL_SERVICE_DEFAULTS=true` only when the **API process** can reach integration URLs on `127.0.0.1` (native API on the host); when unset, `APP_ENV=development` enables the same preset merge. For **Docker Compose**, set `DEPLOYWERK_LOCAL_SERVICE_DEFAULTS=false` and use explicit `DEPLOYWERK_INTEGRATION_*_URL` values with **`host.docker.internal`** (as in [.env.example](.env.example)) so the `api` container reaches services published on the host; [docker-compose.yml](docker-compose.yml) adds `extra_hosts: host.docker.internal:host-gateway` on `api` (Linux-friendly).
 
 ---
 

@@ -37,7 +37,7 @@ fn optional_integration_url(var: &str) -> Option<String> {
 /// | Forgejo | `http://127.0.0.1:3000` |
 /// | Technitium admin | `http://127.0.0.1:5380` |
 /// | Mailcow web | `https://127.0.0.1:8444` |
-/// | Matrix client | *(none — set `DEPLOYWERK_INTEGRATION_MATRIX_CLIENT_URL` if needed)* |
+/// | Matrix client | `http://127.0.0.1:8088` |
 pub(crate) fn merge_local_integration_defaults(urls: &mut IntegrationUrls) {
     if urls.traefik_dashboard_url.is_none() {
         urls.traefik_dashboard_url = Some("http://127.0.0.1:8080".into());
@@ -53,6 +53,9 @@ pub(crate) fn merge_local_integration_defaults(urls: &mut IntegrationUrls) {
     }
     if urls.mailcow_url.is_none() {
         urls.mailcow_url = Some("https://127.0.0.1:8444".into());
+    }
+    if urls.matrix_client_url.is_none() {
+        urls.matrix_client_url = Some("http://127.0.0.1:8088".into());
     }
 }
 
@@ -137,7 +140,7 @@ pub struct Config {
     pub public_app_url: Option<String>,
     /// When true, send best-effort SMTP mail after sensitive super-admin mutations (requires SMTP).
     pub admin_action_emails_enabled: bool,
-    /// When true, `DEPLOYWERK_LOCAL_SERVICE_DEFAULTS` filled unset integration URLs with 127.0.0.1 defaults.
+    /// When true, unset integration URLs get 127.0.0.1 presets. Set via `DEPLOYWERK_LOCAL_SERVICE_DEFAULTS`, or defaults on in `APP_ENV=development` when unset.
     pub local_service_defaults: bool,
     /// Links shown under Platform integrations (bootstrap + UI).
     pub integration_urls: IntegrationUrls,
@@ -417,9 +420,12 @@ impl Config {
             traefik_dashboard_url: optional_integration_url("DEPLOYWERK_INTEGRATION_TRAEFIK_URL"),
         };
 
-        let local_service_defaults = env::var("DEPLOYWERK_LOCAL_SERVICE_DEFAULTS")
-            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-            .unwrap_or(false);
+        let local_service_defaults = match env::var("DEPLOYWERK_LOCAL_SERVICE_DEFAULTS") {
+            Ok(v) if v == "1" || v.eq_ignore_ascii_case("true") => true,
+            Ok(v) if v == "0" || v.eq_ignore_ascii_case("false") => false,
+            Ok(_) => false,
+            Err(_) => app_env.eq_ignore_ascii_case("development"),
+        };
         if local_service_defaults {
             merge_local_integration_defaults(&mut integration_urls);
         }
