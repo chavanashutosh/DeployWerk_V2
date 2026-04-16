@@ -247,7 +247,7 @@ The supported production installer is now [scripts/orbytals-install.sh](scripts/
 - Synapse / Matrix
 - Technitium DNS
 - Cockpit
-- MinIO bucket bootstrap
+- Garage object storage bootstrap
 
 Run it from a clone of this repo:
 
@@ -311,8 +311,10 @@ Loopback-only host ports used by the installer:
 | `8082` | TCP | Mailcow HTTP binding for Traefik |
 | `8444` | TCP | Mailcow HTTPS binding for host-local use |
 | `9090` | TCP | Cockpit host socket, proxied by Traefik by default |
-| `19000` | TCP | MinIO S3 API |
-| `19001` | TCP | MinIO console |
+| `18080` | TCP | Traefik local dashboard bind |
+| `3900` | TCP | Garage S3 API |
+| `3902` | TCP | Garage web endpoint |
+| `3903` | TCP | Garage admin API |
 | `5380` | TCP | Technitium web UI, proxied by Traefik |
 
 Container-exposed or service-specific ports:
@@ -323,7 +325,7 @@ Container-exposed or service-specific ports:
 | `3000` | TCP | Forgejo HTTP inside Docker network |
 | `8008` | TCP | Synapse HTTP inside Docker network |
 
-The installer keeps Cockpit direct `9090` access blocked by UFW unless `OPEN_COCKPIT_PORT=true` is explicitly set.
+The installer keeps Cockpit direct `9090` access blocked by UFW unless `OPEN_COCKPIT_PORT=true` is explicitly set. Traefik’s local dashboard bind uses `127.0.0.1:18080` so it does not collide with the native DeployWerk API on `127.0.0.1:8080`.
 
 ---
 
@@ -403,11 +405,11 @@ Prepend your public API origin. Secrets: see [.env.example](.env.example).
 
 ## Installer notes
 
-[scripts/orbytals-install.sh](scripts/orbytals-install.sh) performs host bootstrap itself: packages, Docker, Cockpit, Node.js 22, Rust, nginx/PostgreSQL prerequisites, Traefik, and the managed application/service stacks.
+[scripts/orbytals-install.sh](scripts/orbytals-install.sh) performs host bootstrap itself: packages, Docker, Cockpit, Node.js 22, Rust, nginx/PostgreSQL prerequisites, Traefik, Garage, and the managed application/service stacks.
 
 Cockpit-specific behavior in the installer:
 
-- installs `cockpit-storaged`, `udisks2-lvm2`, `udisks2-iscsi`, and `udisks2-btrfs` for storage support
+- installs `cockpit-storaged`, `udisks2-lvm2`, and `udisks2-btrfs` for storage support, with `udisks2-iscsi` used when available in apt sources
 - installs `cockpit-packagekit` and `packagekit` for software updates
 - enables `NetworkManager` by default for Cockpit update support on Ubuntu server
 - exposes Cockpit primarily through `https://cockpit.orbytals.com`

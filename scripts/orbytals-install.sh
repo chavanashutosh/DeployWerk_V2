@@ -13,6 +13,7 @@ STATE_FILE="${STATE_FILE:-${STATE_DIR}/install.env}"
 
 TRAEFIK_PUBLIC_NETWORK="${TRAEFIK_PUBLIC_NETWORK:-proxy}"
 TRAEFIK_CONTAINER_NAME="${TRAEFIK_CONTAINER_NAME:-traefik}"
+TRAEFIK_DASHBOARD_LOCAL_PORT="${TRAEFIK_DASHBOARD_LOCAL_PORT:-18080}"
 
 ORBYTALS_APEX_DOMAIN="${ORBYTALS_APEX_DOMAIN:-orbytals.com}"
 ORBYTALS_APP_DOMAIN="${ORBYTALS_APP_DOMAIN:-app.orbytals.com}"
@@ -51,15 +52,17 @@ MAILCOW_HTTPS_BIND="${MAILCOW_HTTPS_BIND:-127.0.0.1}"
 MAILCOW_HTTPS_PORT="${MAILCOW_HTTPS_PORT:-8444}"
 MAILCOW_TRAEFIK_OVERRIDE_FILE="${MAILCOW_TRAEFIK_OVERRIDE_FILE:-docker-compose.orbytals-traefik.yml}"
 
-MINIO_DIR="${MINIO_DIR:-${SERVICE_ROOT}/minio}"
-MINIO_COMPOSE_FILE="${MINIO_COMPOSE_FILE:-${MINIO_DIR}/docker-compose.yml}"
-MINIO_ALIAS_NAME="${MINIO_ALIAS_NAME:-local}"
-MINIO_API_PORT="${MINIO_API_PORT:-19000}"
-MINIO_CONSOLE_PORT="${MINIO_CONSOLE_PORT:-19001}"
-MINIO_ENDPOINT_URL="${MINIO_ENDPOINT_URL:-http://127.0.0.1:${MINIO_API_PORT}}"
-MINIO_ROOT_USER="${MINIO_ROOT_USER:-deploywerk}"
-MINIO_ROOT_PASSWORD="${MINIO_ROOT_PASSWORD:-deploywerk-dev-only-change-me}"
-MINIO_BUCKET_NAME="${MINIO_BUCKET_NAME:-deploywerk}"
+GARAGE_DIR="${GARAGE_DIR:-${SERVICE_ROOT}/garage}"
+GARAGE_COMPOSE_FILE="${GARAGE_COMPOSE_FILE:-${GARAGE_DIR}/docker-compose.yml}"
+GARAGE_CONFIG_FILE="${GARAGE_CONFIG_FILE:-${GARAGE_DIR}/garage.toml}"
+GARAGE_S3_PORT="${GARAGE_S3_PORT:-3900}"
+GARAGE_RPC_PORT="${GARAGE_RPC_PORT:-3901}"
+GARAGE_WEB_PORT="${GARAGE_WEB_PORT:-3902}"
+GARAGE_ADMIN_PORT="${GARAGE_ADMIN_PORT:-3903}"
+GARAGE_ENDPOINT_URL="${GARAGE_ENDPOINT_URL:-http://127.0.0.1:${GARAGE_S3_PORT}}"
+GARAGE_REGION="${GARAGE_REGION:-garage}"
+GARAGE_BUCKET_NAME="${GARAGE_BUCKET_NAME:-deploywerk}"
+GARAGE_KEY_NAME="${GARAGE_KEY_NAME:-deploywerk-key}"
 
 FORGEJO_DIR="${FORGEJO_DIR:-${SERVICE_ROOT}/forgejo}"
 FORGEJO_COMPOSE_FILE="${FORGEJO_COMPOSE_FILE:-${FORGEJO_DIR}/docker-compose.yml}"
@@ -213,8 +216,8 @@ collect_inputs() {
   prompt_with_default DEPLOYWERK_SMTP_USER_PROMPT "DeployWerk SMTP mailbox" "deploywerk@${ORBYTALS_APEX_DOMAIN}"
   prompt_secret DEPLOYWERK_SMTP_PASSWORD_PROMPT "DeployWerk SMTP mailbox password"
   maybe_generate_state_var DEPLOYWERK_DB_PASSWORD generate_alpha_secret
-  maybe_generate_state_var MINIO_ROOT_PASSWORD generate_alpha_secret
-  maybe_generate_state_var MINIO_ROOT_USER generate_alpha_secret
+  maybe_generate_state_var GARAGE_RPC_SECRET generate_alpha_secret
+  maybe_generate_state_var GARAGE_ADMIN_TOKEN generate_alpha_secret
   maybe_generate_state_var MATRIX_REGISTRATION_SHARED_SECRET generate_alpha_secret
   maybe_generate_state_var TECHNITIUM_ADMIN_PASSWORD generate_alpha_secret
   maybe_generate_state_var DEPLOYWERK_JWT_SECRET generate_jwt_secret
@@ -292,6 +295,7 @@ network:
   version: 2
   renderer: NetworkManager
 EOF
+    chmod 600 /etc/netplan/99-orbytals-networkmanager.yaml
     netplan generate
   fi
 
@@ -513,12 +517,12 @@ ensure_deploywerk_env() {
   ensure_env_kv "${DEPLOYWERK_ENV_FILE}" DEPLOYWERK_GIT_SHA "orbytals-native"
   ensure_env_kv "${DEPLOYWERK_ENV_FILE}" DEPLOYWERK_GIT_CACHE_ROOT "${DEPLOYWERK_STATE_ROOT}/git-cache"
   ensure_env_kv "${DEPLOYWERK_ENV_FILE}" DEPLOYWERK_VOLUMES_ROOT "${DEPLOYWERK_STATE_ROOT}/volumes"
-  ensure_env_kv "${DEPLOYWERK_ENV_FILE}" DEPLOYWERK_DEFAULT_STORAGE_ENDPOINT_URL "${MINIO_ENDPOINT_URL}"
-  ensure_env_kv "${DEPLOYWERK_ENV_FILE}" DEPLOYWERK_DEFAULT_STORAGE_BUCKET "${MINIO_BUCKET_NAME}"
-  ensure_env_kv "${DEPLOYWERK_ENV_FILE}" DEPLOYWERK_DEFAULT_STORAGE_REGION "us-east-1"
+  ensure_env_kv "${DEPLOYWERK_ENV_FILE}" DEPLOYWERK_DEFAULT_STORAGE_ENDPOINT_URL "${GARAGE_ENDPOINT_URL}"
+  ensure_env_kv "${DEPLOYWERK_ENV_FILE}" DEPLOYWERK_DEFAULT_STORAGE_BUCKET "${GARAGE_BUCKET_NAME}"
+  ensure_env_kv "${DEPLOYWERK_ENV_FILE}" DEPLOYWERK_DEFAULT_STORAGE_REGION "${GARAGE_REGION}"
   ensure_env_kv "${DEPLOYWERK_ENV_FILE}" DEPLOYWERK_DEFAULT_STORAGE_PATH_STYLE "true"
-  ensure_env_kv "${DEPLOYWERK_ENV_FILE}" DEPLOYWERK_DEFAULT_STORAGE_ACCESS_KEY "${MINIO_ROOT_USER}"
-  ensure_env_kv "${DEPLOYWERK_ENV_FILE}" DEPLOYWERK_DEFAULT_STORAGE_SECRET_KEY "${MINIO_ROOT_PASSWORD}"
+  ensure_env_kv "${DEPLOYWERK_ENV_FILE}" DEPLOYWERK_DEFAULT_STORAGE_ACCESS_KEY "${GARAGE_ACCESS_KEY_ID}"
+  ensure_env_kv "${DEPLOYWERK_ENV_FILE}" DEPLOYWERK_DEFAULT_STORAGE_SECRET_KEY "${GARAGE_SECRET_ACCESS_KEY}"
   ensure_env_kv "${DEPLOYWERK_ENV_FILE}" DEPLOYWERK_PLATFORM_DOCKER_ENABLED "true"
   ensure_env_kv "${DEPLOYWERK_ENV_FILE}" DEPLOYWERK_APPS_BASE_DOMAIN "${ORBYTALS_APEX_DOMAIN}"
   ensure_env_kv "${DEPLOYWERK_ENV_FILE}" DEPLOYWERK_EDGE_MODE "traefik"
@@ -640,35 +644,84 @@ install_native_deploywerk() {
   systemctl restart nginx
 }
 
-write_minio_compose() {
-  ensure_dir "${MINIO_DIR}"
-  cat >"${MINIO_COMPOSE_FILE}" <<EOF
-services:
-  minio:
-    image: minio/minio:latest
-    container_name: orbytals-minio
-    command: server /data --console-address ":9001"
-    restart: unless-stopped
-    environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
-    ports:
-      - "${MINIO_API_PORT}:9000"
-      - "${MINIO_CONSOLE_PORT}:9001"
-    volumes:
-      - ${MINIO_DIR}/data:/data
+write_garage_config() {
+  ensure_dir "${GARAGE_DIR}" "${GARAGE_DIR}/meta" "${GARAGE_DIR}/data"
+  cat >"${GARAGE_CONFIG_FILE}" <<EOF
+metadata_dir = "/var/lib/garage/meta"
+data_dir = "/var/lib/garage/data"
+db_engine = "sqlite"
+
+replication_factor = 1
+rpc_bind_addr = "0.0.0.0:${GARAGE_RPC_PORT}"
+rpc_public_addr = "127.0.0.1:${GARAGE_RPC_PORT}"
+rpc_secret = "${GARAGE_RPC_SECRET}"
+
+[s3_api]
+s3_region = "${GARAGE_REGION}"
+api_bind_addr = "0.0.0.0:${GARAGE_S3_PORT}"
+
+[s3_web]
+bind_addr = "0.0.0.0:${GARAGE_WEB_PORT}"
+
+[admin]
+api_bind_addr = "0.0.0.0:${GARAGE_ADMIN_PORT}"
+admin_token = "${GARAGE_ADMIN_TOKEN}"
+metrics_token = "${GARAGE_ADMIN_TOKEN}"
 EOF
 }
 
-install_minio() {
-  log "Installing MinIO"
-  write_minio_compose
-  (cd "${MINIO_DIR}" && docker compose up -d)
+write_garage_compose() {
+  ensure_dir "${GARAGE_DIR}"
+  cat >"${GARAGE_COMPOSE_FILE}" <<EOF
+services:
+  garage:
+    image: dxflrs/garage:v2.1.0
+    container_name: garage
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${GARAGE_S3_PORT}:${GARAGE_S3_PORT}"
+      - "127.0.0.1:${GARAGE_WEB_PORT}:${GARAGE_WEB_PORT}"
+      - "127.0.0.1:${GARAGE_ADMIN_PORT}:${GARAGE_ADMIN_PORT}"
+    volumes:
+      - ${GARAGE_CONFIG_FILE}:/etc/garage.toml
+      - ${GARAGE_DIR}/meta:/var/lib/garage/meta
+      - ${GARAGE_DIR}/data:/var/lib/garage/data
+EOF
 }
 
-bootstrap_minio_bucket() {
-  log "Bootstrapping MinIO bucket"
-  docker run --rm --network host minio/mc:latest /bin/sh -lc "set -eu; mc alias set ${MINIO_ALIAS_NAME} ${MINIO_ENDPOINT_URL} ${MINIO_ROOT_USER} ${MINIO_ROOT_PASSWORD} >/dev/null; mc mb --ignore-existing ${MINIO_ALIAS_NAME}/${MINIO_BUCKET_NAME} >/dev/null; echo bucket-ready"
+install_garage() {
+  log "Installing Garage"
+  write_garage_config
+  write_garage_compose
+  (cd "${GARAGE_DIR}" && docker compose up -d)
+}
+
+bootstrap_garage() {
+  log "Bootstrapping Garage bucket and keys"
+  local node_id layout_state key_output key_id secret_key
+  node_id="$(docker exec garage /garage -c /etc/garage.toml status | awk '/^[0-9a-f]{8,}/ {print $1; exit}')"
+  [[ -n "${node_id}" ]] || die "could not determine Garage node id"
+
+  layout_state="$(docker exec garage /garage -c /etc/garage.toml layout show 2>/dev/null || true)"
+  if ! printf '%s' "${layout_state}" | grep -q "${node_id}"; then
+    docker exec garage /garage -c /etc/garage.toml layout assign -z dc1 -c 20G "${node_id}"
+  fi
+  if ! printf '%s' "${layout_state}" | grep -q "applied role assignment"; then
+    docker exec garage /garage -c /etc/garage.toml layout apply --version 1 || true
+  fi
+
+  key_output="$(docker exec garage /garage -c /etc/garage.toml key info "${GARAGE_KEY_NAME}" 2>/dev/null || true)"
+  if [[ -z "${key_output}" ]]; then
+    key_output="$(docker exec garage /garage -c /etc/garage.toml key create "${GARAGE_KEY_NAME}")"
+  fi
+  key_id="$(printf '%s\n' "${key_output}" | awk -F': ' '/Key ID/ {print $2; exit}')"
+  secret_key="$(printf '%s\n' "${key_output}" | awk -F': ' '/Secret key/ {print $2; exit}')"
+  [[ -n "${key_id}" && -n "${secret_key}" ]] || die "could not extract Garage S3 credentials"
+  save_state_var GARAGE_ACCESS_KEY_ID "${key_id}"
+  save_state_var GARAGE_SECRET_ACCESS_KEY "${secret_key}"
+
+  docker exec garage /garage -c /etc/garage.toml bucket create "${GARAGE_BUCKET_NAME}" >/dev/null 2>&1 || true
+  docker exec garage /garage -c /etc/garage.toml bucket allow --read --write --owner "${GARAGE_BUCKET_NAME}" --key "${GARAGE_KEY_NAME}" >/dev/null 2>&1 || true
 }
 
 write_technitium_compose() {
@@ -923,7 +976,7 @@ install_mailcow() {
 
 show_port_status() {
   log "Port status"
-  ss -ltnup | awk 'NR==1 || /:22 |:25 |:53 |:80 |:110 |:143 |:443 |:465 |:587 |:993 |:995 |:2222 |:8080 |:8082 |:8085 |:8444 |:8448 |:9090 |:19000 |:19001 /'
+  ss -ltnup | awk 'NR==1 || /:22 |:25 |:53 |:80 |:110 |:143 |:443 |:465 |:587 |:993 |:995 |:2222 |:8080 |:8082 |:8085 |:8444 |:8448 |:9090 |:18080 |:3900 |:3902 |:3903 /'
 }
 
 verify_url() {
@@ -954,7 +1007,7 @@ verify_install() {
   verify_url "https://${HERMES_CHAT_DOMAIN}/.well-known/matrix/server"
   verify_url "http://${DEPLOYWERK_LOOPBACK_HOST}:${DEPLOYWERK_NGINX_PORT}"
   verify_url "http://${DEPLOYWERK_LOOPBACK_HOST}:${DEPLOYWERK_API_PORT}/api/v1/health"
-  verify_url "${MINIO_ENDPOINT_URL}/minio/health/live"
+  verify_url "${GARAGE_ENDPOINT_URL}"
 }
 
 compose_down_if_present() {
@@ -967,7 +1020,7 @@ compose_down_if_present() {
 clean_install() {
   log "Cleaning managed services"
   compose_down_if_present "${EDGE_ROOT}/traefik"
-  compose_down_if_present "${MINIO_DIR}"
+  compose_down_if_present "${GARAGE_DIR}"
   compose_down_if_present "${TECHNITIUM_DIR}"
   compose_down_if_present "${FORGEJO_DIR}"
   compose_down_if_present "${SYNAPSE_DIR}"
@@ -992,8 +1045,8 @@ cmd_install() {
   collect_inputs
   bootstrap_host
   install_traefik
-  install_minio
-  bootstrap_minio_bucket
+  install_garage
+  bootstrap_garage
   install_technitium
   install_forgejo
   install_synapse
