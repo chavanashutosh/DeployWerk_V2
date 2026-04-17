@@ -225,7 +225,8 @@ collect_inputs() {
   prompt_with_default DEPLOYWERK_SMTP_USER_PROMPT "DeployWerk SMTP mailbox" "deploywerk@${ORBYTALS_APEX_DOMAIN}"
   prompt_secret DEPLOYWERK_SMTP_PASSWORD_PROMPT "DeployWerk SMTP mailbox password"
   maybe_generate_state_var DEPLOYWERK_DB_PASSWORD generate_alpha_secret
-  maybe_generate_state_var GARAGE_RPC_SECRET generate_alpha_secret
+  # Garage rpc_secret: exactly 64 hex chars (32 bytes); must not use generate_alpha_secret (48 hex chars).
+  maybe_generate_state_var GARAGE_RPC_SECRET generate_hex32
   maybe_generate_state_var GARAGE_ADMIN_TOKEN generate_alpha_secret
   maybe_generate_state_var MATRIX_REGISTRATION_SHARED_SECRET generate_alpha_secret
   maybe_generate_state_var TECHNITIUM_ADMIN_PASSWORD generate_alpha_secret
@@ -831,8 +832,17 @@ services:
 EOF
 }
 
+ensure_garage_rpc_secret_format() {
+  if [[ "${GARAGE_RPC_SECRET:-}" =~ ^[0-9a-fA-F]{64}$ ]]; then
+    return
+  fi
+  warn "GARAGE_RPC_SECRET must be 64 hex characters (32 bytes) for Garage; regenerating and updating ${STATE_FILE}."
+  save_state_var GARAGE_RPC_SECRET "$(generate_hex32)"
+}
+
 install_garage() {
   log "Installing Garage"
+  ensure_garage_rpc_secret_format
   write_garage_config
   write_garage_compose
   (cd "${GARAGE_DIR}" && docker compose up -d) || {

@@ -429,6 +429,10 @@ docker ps --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}'
 docker logs garage --tail 200
 ```
 
+### Garage: `Invalid RPC secret key: expected 32 bytes of random hex`
+
+Garage’s `rpc_secret` in `garage.toml` must be **exactly 64 hexadecimal characters** (32 random bytes). The installer generates this automatically. If you see this error from an older run, pull an updated `scripts/orbytals-install.sh` and re-run the Garage step (or delete the bad `GARAGE_RPC_SECRET` from the installer state file so it can be regenerated).
+
 ### Garage restarts with `missing field root_domain` under `[s3_web]`
 
 Recent Garage releases require `root_domain` in the `[s3_web]` section of `garage.toml`. The installer writes a default (`.web.garage.localhost`); set `GARAGE_S3_WEB_ROOT_DOMAIN` before install if you use a real DNS suffix for bucket websites. If you upgraded from an older generated config, add `root_domain` next to `bind_addr` under `[s3_web]` and run `docker compose up -d` again in the Garage directory (often `/opt/orbytals/garage` or `GARAGE_DIR`).
