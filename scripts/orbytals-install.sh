@@ -708,7 +708,7 @@ bootstrap_host() {
   chmod 600 /opt/traefik/acme/acme.json || true
   ensure_dir "${INSTALL_ROOT}" "${SERVICE_ROOT}" /etc/deploywerk "${DEPLOYWERK_WEB_ROOT}" "${DEPLOYWERK_STATE_ROOT}/git-cache" "${DEPLOYWERK_STATE_ROOT}/volumes"
 
-  docker network create "${TRAEFIK_PUBLIC_NETWORK}" >/dev/null 2>&1 || true
+  ensure_traefik_public_network
 }
 
 disable_default_nginx_site() {
@@ -733,6 +733,17 @@ copy_edge_tree() {
   else
     cp -a "${SOURCE_TREE}/." "${EDGE_ROOT}/"
   fi
+}
+
+# Shared Traefik ↔ backends Docker network (compose marks it external). `docker system prune` removes it when no
+# container is attached — e.g. after `redeploy` downs all stacks — so callers must ensure it exists before compose up.
+ensure_traefik_public_network() {
+  if docker network inspect "${TRAEFIK_PUBLIC_NETWORK}" >/dev/null 2>&1; then
+    return 0
+  fi
+  log "Creating Docker network '${TRAEFIK_PUBLIC_NETWORK}' (Traefik edge + labeled backends)"
+  docker network create "${TRAEFIK_PUBLIC_NETWORK}" >/dev/null \
+    || die "Failed to create Docker network '${TRAEFIK_PUBLIC_NETWORK}'. Is the Docker daemon running?"
 }
 
 write_traefik_native_services() {
@@ -818,12 +829,14 @@ ensure_traefik_env() {
   [[ -f "$envf" ]] || cp "${EDGE_ROOT}/traefik/.env.example" "$envf"
   ensure_env_kv "$envf" ACME_EMAIL "${ACME_EMAIL}"
   ensure_env_kv "$envf" ACME_JSON_HOST_PATH "/opt/traefik/acme/acme.json"
+  ensure_env_kv "$envf" TRAEFIK_PUBLIC_NETWORK "${TRAEFIK_PUBLIC_NETWORK}"
 }
 
 install_traefik() {
   log "Installing Traefik edge"
   copy_edge_tree
   ensure_traefik_env
+  ensure_traefik_public_network
   write_traefik_native_services
   gen_dashboard_auth
   (cd "${EDGE_ROOT}/traefik" && docker compose up -d) || {
@@ -1741,6 +1754,7 @@ Loopback / local binds (optional environment):
   MAILCOW_IPV4_NETWORK       Pin Mailcow internal n.n.n prefix for n.n.n.0/24 (default: auto free /24)
   MAILCOW_ENABLE_IPV6        true/false for mailcow-network IPv6 (default: false; avoids Docker IPv6 pool overlap)
   CURL_TRAEFIK_LOOPBACK_IP   Numeric IP for curl --resolve when probing Traefik on loopback (default: 127.0.0.1)
+  TRAEFIK_PUBLIC_NETWORK    Shared Docker network for Traefik + labeled stacks (default: proxy). Recreated by install if missing.
   VERIFY_COCKPIT             Set true to include Cockpit in verify (default: false)
 EOF
 }

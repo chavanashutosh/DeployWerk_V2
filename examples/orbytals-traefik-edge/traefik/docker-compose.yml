@@ -1,7 +1,7 @@
 # Traefik edge (orbytals.com + hermesapp.live). Run from this directory:
 #   docker compose up -d
 #
-# Prerequisites: external Docker network "proxy" (or run scripts/orbytals-install.sh).
+# Prerequisites: external Docker network (default name "proxy"; or run scripts/orbytals-install.sh).
 # Attach backends (Synapse, Mailcow nginx, etc.)
 # to the same network so Docker provider labels and file-provider upstream names resolve.
 #
@@ -19,6 +19,7 @@ services:
       - .env
     environment:
       ACME_EMAIL: ${ACME_EMAIL:-postmaster@orbytals.com}
+      TRAEFIK_PROVIDERS_DOCKER_NETWORK: ${TRAEFIK_PUBLIC_NETWORK:-proxy}
     ports:
       - "80:80"
       - "443:443"
@@ -31,8 +32,9 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     networks:
-      - proxy
+      - traefik_public
 
 networks:
-  proxy:
+  traefik_public:
+    name: ${TRAEFIK_PUBLIC_NETWORK:-proxy}
     external: true

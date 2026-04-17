@@ -23,7 +23,7 @@ providers:
   docker:
     endpoint: unix:///var/run/docker.sock
     exposedByDefault: false
-    network: proxy
+    # Default Docker network for labeled services: set via TRAEFIK_PROVIDERS_DOCKER_NETWORK in compose (.env).
   file:
     directory: /etc/traefik/dynamic
     watch: true
