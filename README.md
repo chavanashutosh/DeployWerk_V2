@@ -259,7 +259,7 @@ The script prompts interactively for operator credentials and stores its managed
 
 **Loopback host:** Defaults use **`127.0.0.1`**; **`localhost`** is equivalent for API/nginx, `DATABASE_URL`, SMTP, etc. **Docker Compose `ports:`** must use a numeric IP — the installer maps either loopback name to **`127.0.0.1`** for Traefik, Garage, Technitium, and Mailcow publish binds. Traefik **`curl --resolve`** uses **`CURL_TRAEFIK_LOOPBACK_IP=127.0.0.1`**. See **`sudo bash scripts/orbytals-install.sh --help`** for the full env list.
 
-**TLS / Let's Encrypt:** The installer does **not** run `certbot`. **Traefik** terminates HTTPS on **443** and obtains certificates from **Let's Encrypt** via the **ACME HTTP-01** challenge on **80** (see `certificatesResolvers.le` in the bundled Traefik static config). Certificates are stored in `/opt/traefik/acme/acme.json`. During install you supply **`ACME_EMAIL`** for Let's Encrypt registration. Plain HTTP on **80** redirects to HTTPS except `/.well-known/acme-challenge`, which ACME needs. **Mailcow** is set to **`SKIP_LETS_ENCRYPT=y`** so it does not request its own certs; Traefik still serves **`https://mail.<domain>`** with LE. Until DNS points at this host and ACME finishes, browsers may warn about the certificate; the script's verify step may use `curl -k` while polling.
+**TLS / Let's Encrypt:** The installer does **not** run `certbot`. **Traefik** terminates HTTPS on **443** and obtains **production** Let's Encrypt certificates via **ACME HTTP-01** on **80** (resolver `le`; CA URL defaults to `https://acme-v02.api.letsencrypt.org/directory`, overridable with **`TRAEFIK_ACME_CASERVER`** for staging only). Certificates are stored in `/opt/traefik/acme/acme.json`. You supply **`ACME_EMAIL`** during install (also written to Mailcow as **`ACME_ACCOUNT_EMAIL`** for consistency). Plain HTTP on **80** redirects to HTTPS except `/.well-known/acme-challenge`. Every routed hostname (app, api, mail, git, dns, Traefik dashboard, portal, Matrix, etc.) uses **`tls.certresolver=le`** so browsers get real LE chains. **Mailcow** keeps **`SKIP_LETS_ENCRYPT=y`**: Mailcow must not run a second HTTP-01 client on this host while Traefik owns public **80/443** for **`https://mail.<domain>`** — that URL still uses **Let's Encrypt** from Traefik. After the full stack is up, **`wait_for_traefik_le_all_hosts`** polls until **`curl`** trusts all sites (or times out; tune **`TRAEFIK_ACME_WAIT_SECONDS`**). **`verify`** defaults to **`VERIFY_STRICT_TLS=true`** (no `curl -k`); set **`VERIFY_STRICT_TLS=false`** only while debugging.
 
 **Mailcow Docker network:** If **`docker compose up`** fails with **pool overlaps** on **`mailcow-network`**, the installer picks a free **`IPV4_NETWORK`** (Mailcow internal **`/24`**) using **`python3`** + **`docker network inspect`**, sets **`ENABLE_IPV6=false`** by default (many overlaps are IPv6; set **`MAILCOW_ENABLE_IPV6=true`** if you need it), removes a stale **`${COMPOSE_PROJECT_NAME}_mailcow-network`** (default **`mailcowdockerized_mailcow-network`**) before **`up`**, and falls back to **`10.254.99`** if no candidate fits. Override with **`MAILCOW_IPV4_NETWORK`** / **`MAILCOW_IPV6_NETWORK`**. See [docs/orbytals-install-verification.md](docs/orbytals-install-verification.md).
 
@@ -287,6 +287,7 @@ The installer assumes public DNS already points the following names at the Traef
 - `git.orbytals.com`
 - `dns.orbytals.com`
 - `traefik.orbytals.com`
+- `home.orbytals.com` (optional launch page with links to all apps; default `home.<apex>` from `ORBYTALS_PORTAL_DOMAIN`)
 - `cockpit.orbytals.com`
 - `chat.hermesapp.live`
 - `api.hermesapp.live`
@@ -302,6 +303,7 @@ External public URLs (via Traefik):
 - `https://git.orbytals.com`
 - `https://dns.orbytals.com` (Technitium web UI)
 - `https://traefik.orbytals.com`
+- `https://home.orbytals.com` (static nginx portal listing stack links)
 - `https://cockpit.orbytals.com`
 - `https://chat.hermesapp.live` (Matrix/Synapse, e.g. `/_matrix/client/versions`)
 - `https://api.hermesapp.live` (Synapse homeserver API, e.g. `/_matrix/client/versions`)

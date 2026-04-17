@@ -2,7 +2,7 @@
 
 ## TLS / Let's Encrypt (Traefik ACME)
 
-Public HTTPS is served by **Traefik** using **Let's Encrypt** through Traefik's **ACME** client (**HTTP-01** on port **80**). The installer does **not** run `certbot`. Certs live on the host at `/opt/traefik/acme/acme.json` (mounted into the Traefik container). **Port 80** must be reachable from the internet for issuance and renewal; Traefik redirects normal HTTP traffic to HTTPS except `/.well-known/acme-challenge`. If verification prints "TLS certificate verify skipped", ACME may still be completing or the chain is not yet trusted; confirm DNS **A/AAAA** for every hostname (including the **apex** domain) points at this server.
+Public HTTPS is served by **Traefik** using **Let's Encrypt** (production ACME directory by default) via **HTTP-01** on port **80**. The installer does **not** run `certbot`. Certs live on the host at `/opt/traefik/acme/acme.json` (mounted into the Traefik container). **Port 80** must be reachable from the internet for issuance and renewal; Traefik redirects normal HTTP traffic to HTTPS except `/.well-known/acme-challenge`. After **`install`** / **`redeploy`**, **`wait_for_traefik_le_all_hosts`** waits (up to **`TRAEFIK_ACME_WAIT_SECONDS`**) for **trusted** TLS on every public hostname. **`verify`** uses **`VERIFY_STRICT_TLS=true`** by default (certificate verification on; no `curl -k`). If checks fail, confirm DNS **A/AAAA** for every hostname (including the **apex**) points at this server. **Mailcow** uses **`SKIP_LETS_ENCRYPT=y`** while Traefik still obtains **Let's Encrypt** for **`https://mail.<domain>`** (single ACME client on the host).
 
 **Loopback:** Default **`DEPLOYWERK_LOOPBACK_HOST`** is **`127.0.0.1`**; **`localhost`** is equivalent for nginx, API, Postgres URL, SMTP. **Docker `ports:`** on the host must use a numeric IP; the installer maps either loopback name to **`127.0.0.1`** for Traefik/Garage/Technitium/Mailcow publish sides. **`curl --resolve`** uses **`CURL_TRAEFIK_LOOPBACK_IP`** (default **`127.0.0.1`**).
 
@@ -140,7 +140,7 @@ Pull the updated installer (so **`mailcow.conf`** gets a new **`IPV4_NETWORK`**)
 An HTTP/2 `404` with a small body usually means **Traefik handled the request** but no router matched, or the backend returned `404` for that path. Typical follow-ups:
 
 - Confirm DNS **A/AAAA** for those names points at this server (optional for loopback verify; required from the Internet).
-- Let **ACME** finish (`acme.json`); the script may print “TLS certificate verify skipped” while using `-k` — that is expected until the public chain is valid.
+- Let **ACME** finish (`acme.json`). With **`VERIFY_STRICT_TLS=true`**, **`verify`** does not accept `curl -k`; use **`VERIFY_STRICT_TLS=false`** only while debugging, or increase **`TRAEFIK_ACME_WAIT_SECONDS`** if issuance is slow.
 - For Matrix, **`.well-known`** and federation often need extra routes on the **apex** domain; the bundled file provider only wires what the template describes.
 
 ## `install.env` and `apt` (from earlier runs)

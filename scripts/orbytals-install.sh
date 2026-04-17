@@ -7,6 +7,7 @@ SOURCE_TREE="${SOURCE_TREE:-${REPO_ROOT}/examples/orbytals-traefik-edge}"
 
 INSTALL_ROOT="${INSTALL_ROOT:-/opt/orbytals}"
 EDGE_ROOT="${EDGE_ROOT:-${INSTALL_ROOT}/edge}"
+PORTAL_DIR="${PORTAL_DIR:-${EDGE_ROOT}/portal}"
 SERVICE_ROOT="${SERVICE_ROOT:-${INSTALL_ROOT}/services}"
 STATE_DIR="${STATE_DIR:-/etc/orbytals}"
 STATE_FILE="${STATE_FILE:-${STATE_DIR}/install.env}"
@@ -23,6 +24,8 @@ ORBYTALS_GIT_DOMAIN="${ORBYTALS_GIT_DOMAIN:-git.orbytals.com}"
 ORBYTALS_DNS_DOMAIN="${ORBYTALS_DNS_DOMAIN:-dns.orbytals.com}"
 ORBYTALS_TRAEFIK_DOMAIN="${ORBYTALS_TRAEFIK_DOMAIN:-traefik.orbytals.com}"
 ORBYTALS_COCKPIT_DOMAIN="${ORBYTALS_COCKPIT_DOMAIN:-cockpit.orbytals.com}"
+# Launch page with links to all Traefik-routed apps (single nginx container). Add DNS for this host.
+ORBYTALS_PORTAL_DOMAIN="${ORBYTALS_PORTAL_DOMAIN:-home.${ORBYTALS_APEX_DOMAIN}}"
 HERMES_CHAT_DOMAIN="${HERMES_CHAT_DOMAIN:-chat.hermesapp.live}"
 HERMES_API_DOMAIN="${HERMES_API_DOMAIN:-api.hermesapp.live}"
 
@@ -111,6 +114,17 @@ COCKPIT_USE_NETWORKMANAGER="${COCKPIT_USE_NETWORKMANAGER:-true}"
 COCKPIT_PORT="${COCKPIT_PORT:-9292}"
 # When false, `verify` skips Traefik→Cockpit HTTPS (often flaky vs UFW/Docker→host); set true to enforce the check.
 VERIFY_COCKPIT="${VERIFY_COCKPIT:-false}"
+# When true (default), `verify` requires a publicly trusted TLS chain (no curl -k fallback).
+VERIFY_STRICT_TLS="${VERIFY_STRICT_TLS:-true}"
+# Poll Traefik until LE certs verify or timeout (DNS + port 80 must allow HTTP-01).
+TRAEFIK_ACME_WAIT_SECONDS="${TRAEFIK_ACME_WAIT_SECONDS:-240}"
+TRAEFIK_ACME_POLL_INTERVAL="${TRAEFIK_ACME_POLL_INTERVAL:-5}"
+# Production Let's Encrypt by default; use staging only when debugging ACME rate limits.
+TRAEFIK_ACME_CASERVER="${TRAEFIK_ACME_CASERVER:-https://acme-v02.api.letsencrypt.org/directory}"
+# If ACME wait times out, optionally probe with curl -k to nudge router creation (does not validate trust).
+TRAEFIK_ACME_RELAXED_FALLBACK="${TRAEFIK_ACME_RELAXED_FALLBACK:-false}"
+# Mailcow: must stay y while Traefik terminates HTTPS for MAILCOW_HOSTNAME (HTTP-01 on :80). TLS is still real LE from Traefik.
+MAILCOW_SKIP_LETS_ENCRYPT="${MAILCOW_SKIP_LETS_ENCRYPT:-y}"
 
 ELEMENT_DIR="${ELEMENT_DIR:-${SERVICE_ROOT}/element-web}"
 ELEMENT_COMPOSE_FILE="${ELEMENT_COMPOSE_FILE:-${ELEMENT_DIR}/docker-compose.yml}"
@@ -833,6 +847,7 @@ ensure_traefik_env() {
   ensure_env_kv "$envf" ACME_EMAIL "${ACME_EMAIL}"
   ensure_env_kv "$envf" ACME_JSON_HOST_PATH "/opt/traefik/acme/acme.json"
   ensure_env_kv "$envf" TRAEFIK_PUBLIC_NETWORK "${TRAEFIK_PUBLIC_NETWORK}"
+  ensure_env_kv "$envf" TRAEFIK_ACME_CASERVER "${TRAEFIK_ACME_CASERVER}"
 }
 
 install_traefik() {
@@ -850,27 +865,228 @@ install_traefik() {
   trigger_traefik_acme
 }
 
-trigger_traefik_acme() {
-  log "Triggering Traefik ACME (loopback SNI)"
-  # Any HTTPS request with correct SNI will trigger certificate acquisition for that host/router.
-  # We use -k because Traefik serves a default cert until ACME completes.
-  local hosts=(
-    "${ORBYTALS_APP_DOMAIN}"
-    "${ORBYTALS_APEX_DOMAIN}"
-    "${ORBYTALS_API_DOMAIN}"
-    "${ORBYTALS_MAIL_DOMAIN}"
-    "${ORBYTALS_GIT_DOMAIN}"
-    "${ORBYTALS_DNS_DOMAIN}"
-    "${ORBYTALS_TRAEFIK_DOMAIN}"
-    "${ORBYTALS_COCKPIT_DOMAIN}"
-    "${HERMES_CHAT_DOMAIN}"
+traefik_acme_host_list() {
+  printf '%s\n' \
+    "${ORBYTALS_APP_DOMAIN}" \
+    "${ORBYTALS_APEX_DOMAIN}" \
+    "${ORBYTALS_API_DOMAIN}" \
+    "${ORBYTALS_MAIL_DOMAIN}" \
+    "${ORBYTALS_GIT_DOMAIN}" \
+    "${ORBYTALS_DNS_DOMAIN}" \
+    "${ORBYTALS_TRAEFIK_DOMAIN}" \
+    "${ORBYTALS_COCKPIT_DOMAIN}" \
+    "${ORBYTALS_PORTAL_DOMAIN}" \
+    "${HERMES_CHAT_DOMAIN}" \
     "${HERMES_API_DOMAIN}"
-  )
+}
+
+trigger_traefik_acme() {
+  log "Priming Traefik ACME (Let's Encrypt HTTP-01, CA: ${TRAEFIK_ACME_CASERVER})"
+  local hosts=()
+  while IFS= read -r line; do
+    [[ -n "$line" ]] && hosts+=("$line")
+  done < <(traefik_acme_host_list)
   local h
   for h in "${hosts[@]}"; do
-    curl -kfsSI --max-time 10 --resolve "${h}:443:${CURL_TRAEFIK_LOOPBACK_IP}" "https://${h}/" >/dev/null 2>&1 || true
+    # No curl -f: some hosts (e.g. Synapse API) return 404 on / but still present valid TLS.
+    curl -sSI --max-time 12 --resolve "${h}:443:${CURL_TRAEFIK_LOOPBACK_IP}" "https://${h}/" >/dev/null 2>&1 \
+      || curl -ksSI --max-time 12 --resolve "${h}:443:${CURL_TRAEFIK_LOOPBACK_IP}" "https://${h}/" >/dev/null 2>&1 \
+      || true
   done
 }
+
+wait_for_traefik_le_all_hosts() {
+  log "Waiting for trusted Let's Encrypt TLS on all public hostnames (up to ${TRAEFIK_ACME_WAIT_SECONDS}s)"
+  local hosts=()
+  while IFS= read -r line; do
+    [[ -n "$line" ]] && hosts+=("$line")
+  done < <(traefik_acme_host_list)
+
+  local deadline all_ok
+  deadline=$(( $(date +%s) + TRAEFIK_ACME_WAIT_SECONDS ))
+
+  while [[ "$(date +%s)" -lt "${deadline}" ]]; do
+    all_ok=true
+    local h
+    for h in "${hosts[@]}"; do
+      if ! curl -sSI --max-time 15 --resolve "${h}:443:${CURL_TRAEFIK_LOOPBACK_IP}" "https://${h}/" >/dev/null 2>&1; then
+        all_ok=false
+        break
+      fi
+    done
+    if [[ "${all_ok}" == "true" ]]; then
+      log "Traefik ACME: all ${#hosts[@]} hostnames use publicly trusted TLS"
+      return 0
+    fi
+    sleep "${TRAEFIK_ACME_POLL_INTERVAL}"
+  done
+
+  warn "Traefik ACME: trusted TLS not ready for every hostname within ${TRAEFIK_ACME_WAIT_SECONDS}s — check public DNS (A/AAAA) and inbound TCP 80 for HTTP-01."
+  if [[ "${TRAEFIK_ACME_RELAXED_FALLBACK}" == "true" ]]; then
+    warn "TRAEFIK_ACME_RELAXED_FALLBACK=true: sending insecure HTTPS probes (does not validate certificate trust)."
+    for h in "${hosts[@]}"; do
+      curl -ksSI --max-time 10 --resolve "${h}:443:${CURL_TRAEFIK_LOOPBACK_IP}" "https://${h}/" >/dev/null 2>&1 || true
+    done
+  fi
+}
+
+write_portal_index() {
+  ensure_dir "${PORTAL_DIR}/html"
+  cat >"${PORTAL_DIR}/html/index.html" <<EOF
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Orbytals — Apps</title>
+  <style>
+    :root {
+      --bg: #0f1419;
+      --card: #1a2332;
+      --border: #2d3a4d;
+      --text: #e7ecf3;
+      --muted: #8b9cb3;
+      --accent: #5b9cf5;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: system-ui, "Segoe UI", Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      padding: 2rem clamp(1rem, 4vw, 3rem);
+    }
+    header { margin-bottom: 2rem; }
+    h1 { font-size: 1.75rem; font-weight: 600; margin: 0 0 0.35rem; }
+    p.sub { margin: 0; color: var(--muted); font-size: 0.95rem; }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(11rem, 1fr));
+      gap: 1rem;
+      max-width: 72rem;
+    }
+    a.card {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      text-align: center;
+      padding: 1.25rem 1rem;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      color: inherit;
+      text-decoration: none;
+      transition: border-color 0.15s, transform 0.12s;
+    }
+    a.card:hover {
+      border-color: var(--accent);
+      transform: translateY(-2px);
+    }
+    .icon { font-size: 2rem; line-height: 1; margin-bottom: 0.6rem; }
+    .name { font-weight: 600; font-size: 0.95rem; }
+    .host { font-size: 0.7rem; color: var(--muted); margin-top: 0.35rem; word-break: break-all; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Orbytals</h1>
+    <p class="sub">Shortcuts to services on this host</p>
+  </header>
+  <main class="grid">
+    <a class="card" href="https://${ORBYTALS_APP_DOMAIN}/" target="_blank" rel="noopener noreferrer">
+      <span class="icon" aria-hidden="true">🚀</span>
+      <span class="name">DeployWerk app</span>
+      <span class="host">${ORBYTALS_APP_DOMAIN}</span>
+    </a>
+    <a class="card" href="https://${ORBYTALS_APEX_DOMAIN}/" target="_blank" rel="noopener noreferrer">
+      <span class="icon" aria-hidden="true">🌐</span>
+      <span class="name">Apex site</span>
+      <span class="host">${ORBYTALS_APEX_DOMAIN}</span>
+    </a>
+    <a class="card" href="https://${ORBYTALS_API_DOMAIN}/" target="_blank" rel="noopener noreferrer">
+      <span class="icon" aria-hidden="true">⚡</span>
+      <span class="name">API</span>
+      <span class="host">${ORBYTALS_API_DOMAIN}</span>
+    </a>
+    <a class="card" href="https://${ORBYTALS_MAIL_DOMAIN}/" target="_blank" rel="noopener noreferrer">
+      <span class="icon" aria-hidden="true">✉️</span>
+      <span class="name">Mail (Mailcow)</span>
+      <span class="host">${ORBYTALS_MAIL_DOMAIN}</span>
+    </a>
+    <a class="card" href="https://${ORBYTALS_GIT_DOMAIN}/" target="_blank" rel="noopener noreferrer">
+      <span class="icon" aria-hidden="true">🦊</span>
+      <span class="name">Git (Forgejo)</span>
+      <span class="host">${ORBYTALS_GIT_DOMAIN}</span>
+    </a>
+    <a class="card" href="https://${ORBYTALS_DNS_DOMAIN}/" target="_blank" rel="noopener noreferrer">
+      <span class="icon" aria-hidden="true">🔷</span>
+      <span class="name">DNS (Technitium)</span>
+      <span class="host">${ORBYTALS_DNS_DOMAIN}</span>
+    </a>
+    <a class="card" href="https://${ORBYTALS_TRAEFIK_DOMAIN}/" target="_blank" rel="noopener noreferrer">
+      <span class="icon" aria-hidden="true">🔀</span>
+      <span class="name">Traefik</span>
+      <span class="host">${ORBYTALS_TRAEFIK_DOMAIN}</span>
+    </a>
+    <a class="card" href="https://${ORBYTALS_COCKPIT_DOMAIN}/" target="_blank" rel="noopener noreferrer">
+      <span class="icon" aria-hidden="true">🖥️</span>
+      <span class="name">Cockpit</span>
+      <span class="host">${ORBYTALS_COCKPIT_DOMAIN}</span>
+    </a>
+    <a class="card" href="https://${HERMES_CHAT_DOMAIN}/" target="_blank" rel="noopener noreferrer">
+      <span class="icon" aria-hidden="true">💬</span>
+      <span class="name">Element (chat)</span>
+      <span class="host">${HERMES_CHAT_DOMAIN}</span>
+    </a>
+    <a class="card" href="https://${HERMES_API_DOMAIN}/_matrix/client/versions" target="_blank" rel="noopener noreferrer">
+      <span class="icon" aria-hidden="true">🔌</span>
+      <span class="name">Synapse (Matrix)</span>
+      <span class="host">${HERMES_API_DOMAIN}</span>
+    </a>
+  </main>
+</body>
+</html>
+EOF
+}
+
+write_portal_compose() {
+  ensure_dir "${PORTAL_DIR}/html"
+  cat >"${PORTAL_DIR}/docker-compose.yml" <<EOF
+services:
+  orbytals-portal:
+    image: docker.io/library/nginx:alpine
+    container_name: orbytals-portal
+    restart: unless-stopped
+    volumes:
+      - ./html:/usr/share/nginx/html:ro
+    networks:
+      - traefik_edge
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=${TRAEFIK_PUBLIC_NETWORK}"
+      - "traefik.http.routers.orbytals-portal.rule=Host(\`${ORBYTALS_PORTAL_DOMAIN}\`)"
+      - "traefik.http.routers.orbytals-portal.entrypoints=websecure"
+      - "traefik.http.routers.orbytals-portal.tls.certresolver=le"
+      - "traefik.http.routers.orbytals-portal.middlewares=secure-headers@file"
+      - "traefik.http.services.orbytals-portal.loadbalancer.server.port=80"
+
+networks:
+  traefik_edge:
+    name: ${TRAEFIK_PUBLIC_NETWORK}
+    external: true
+EOF
+}
+
+install_portal() {
+  log "Installing Orbytals app portal (nginx)"
+  ensure_traefik_public_network
+  write_portal_compose
+  write_portal_index
+  compose_up_or_die "${PORTAL_DIR}" "Orbytals portal" "orbytals-portal"
+  trigger_traefik_acme
+}
+
 ensure_deploywerk_user() {
   if ! id -u "${DEPLOYWERK_USER}" >/dev/null 2>&1; then
     useradd --system --create-home --home-dir "${DEPLOYWERK_HOME}" --shell /usr/sbin/nologin "${DEPLOYWERK_USER}"
@@ -897,6 +1113,7 @@ ensure_deploywerk_env() {
   ensure_env_kv "${DEPLOYWERK_ENV_FILE}" SERVER_KEY_ENCRYPTION_KEY "${DEPLOYWERK_SERVER_KEY_ENCRYPTION_KEY}"
   ensure_env_kv "${DEPLOYWERK_ENV_FILE}" DEPLOYWERK_API_URL "https://${ORBYTALS_API_DOMAIN}"
   ensure_env_kv "${DEPLOYWERK_ENV_FILE}" DEPLOYWERK_PUBLIC_APP_URL "https://${ORBYTALS_APP_DOMAIN}"
+  ensure_env_kv "${DEPLOYWERK_ENV_FILE}" DEPLOYWERK_PUBLIC_PORTAL_URL "https://${ORBYTALS_PORTAL_DOMAIN}"
   ensure_env_kv "${DEPLOYWERK_ENV_FILE}" VITE_API_URL ""
   ensure_env_kv "${DEPLOYWERK_ENV_FILE}" DEPLOYWERK_API_PROXY "http://${DEPLOYWERK_LOOPBACK_HOST}:${DEPLOYWERK_API_PORT}"
   ensure_env_kv "${DEPLOYWERK_ENV_FILE}" DEPLOYWERK_GIT_SHA "orbytals-native"
@@ -1489,7 +1706,12 @@ ensure_mailcow_config() {
     )
   fi
   ensure_conf_kv "$conf" MAILCOW_HOSTNAME "${ORBYTALS_MAIL_DOMAIN}"
-  ensure_conf_kv "$conf" SKIP_LETS_ENCRYPT "y"
+  if [[ "${MAILCOW_SKIP_LETS_ENCRYPT}" != "y" ]]; then
+    warn "MAILCOW_SKIP_LETS_ENCRYPT must be y while Traefik serves https://${ORBYTALS_MAIL_DOMAIN} with Let's Encrypt; Mailcow's ACME cannot use public HTTP-01 on this host. Forcing y."
+    MAILCOW_SKIP_LETS_ENCRYPT="y"
+  fi
+  ensure_conf_kv "$conf" SKIP_LETS_ENCRYPT "${MAILCOW_SKIP_LETS_ENCRYPT}"
+  ensure_conf_kv "$conf" ACME_ACCOUNT_EMAIL "${ACME_EMAIL}"
   # HTTP(S)_BIND: nginx-style localhost is fine, but Docker-published host sides need a numeric IP — normalize loopback names.
   local hbind="${MAILCOW_HTTP_BIND}" hsbind="${MAILCOW_HTTPS_BIND}"
   if is_ipv4_loopback_name "${hbind}"; then hbind="127.0.0.1"; fi
@@ -1609,14 +1831,20 @@ verify_traefik_https() {
     printf '%s\n' "$out" | head -n 25
     return 0
   fi
+  if [[ "${VERIFY_STRICT_TLS}" != "false" ]]; then
+    echo "(failed — no trusted TLS / HTTP response; VERIFY_STRICT_TLS is not false)"
+    printf '%s\n' "$out" | tail -n 12
+    return 1
+  fi
   out="$(curl -ksSI --max-time 25 --resolve "${host}:443:${CURL_TRAEFIK_LOOPBACK_IP}" "$url" 2>&1)" || true
   if printf '%s' "$out" | grep -qE '^HTTP/[0-9.]+ '; then
     printf '%s\n' "$out" | head -n 25
-    echo "(TLS certificate verify skipped; fix ACME or trust chain if this is unexpected)"
+    echo "(VERIFY_STRICT_TLS=false: certificate verify skipped)"
     return 0
   fi
   echo "(failed — Traefik not on 443, no router for Host, or connection error)"
   printf '%s\n' "$out" | tail -n 10
+  return 1
 }
 
 # Garage S3 API often returns 4xx on HEAD /; curl -f would false-fail. Accept any HTTP response or open TCP port.
@@ -1647,6 +1875,7 @@ verify_install() {
   verify_traefik_https "${ORBYTALS_GIT_DOMAIN}" "/"
   verify_traefik_https "${ORBYTALS_DNS_DOMAIN}" "/"
   verify_traefik_https "${ORBYTALS_TRAEFIK_DOMAIN}" "/"
+  verify_traefik_https "${ORBYTALS_PORTAL_DOMAIN}" "/"
   if [[ "${VERIFY_COCKPIT}" == "true" ]]; then
     verify_traefik_https "${ORBYTALS_COCKPIT_DOMAIN}" "/"
   fi
@@ -1672,6 +1901,7 @@ cmd_redeploy() {
   log "Redeploying managed stacks (down -> prune -> up)"
 
   compose_down_if_present "${EDGE_ROOT}/traefik"
+  compose_down_if_present "${PORTAL_DIR}"
   compose_down_if_present "${GARAGE_DIR}"
   compose_down_if_present "${TECHNITIUM_DIR}"
   compose_down_if_present "${FORGEJO_DIR}"
@@ -1684,6 +1914,7 @@ cmd_redeploy() {
   docker system prune -f || true
 
   install_traefik
+  install_portal
   install_garage
   bootstrap_garage
   install_technitium
@@ -1692,6 +1923,7 @@ cmd_redeploy() {
   install_element_web
   install_mailcow
   install_native_deploywerk
+  wait_for_traefik_le_all_hosts
 
   verify_install
 }
@@ -1699,6 +1931,7 @@ cmd_redeploy() {
 clean_install() {
   log "Cleaning managed services"
   compose_down_if_present "${EDGE_ROOT}/traefik"
+  compose_down_if_present "${PORTAL_DIR}"
   compose_down_if_present "${GARAGE_DIR}"
   compose_down_if_present "${TECHNITIUM_DIR}"
   compose_down_if_present "${FORGEJO_DIR}"
@@ -1726,6 +1959,7 @@ cmd_install() {
   preflight_ports
   bootstrap_host
   install_traefik
+  install_portal
   install_garage
   bootstrap_garage
   install_technitium
@@ -1734,6 +1968,7 @@ cmd_install() {
   install_element_web
   install_mailcow
   install_native_deploywerk
+  wait_for_traefik_le_all_hosts
 }
 
 cmd_all() {
@@ -1763,7 +1998,13 @@ Loopback / local binds (optional environment):
   MAILCOW_SKIP_UNBOUND_HEALTHCHECK  y/n for mailcow.conf SKIP_UNBOUND_HEALTHCHECK (default: y; avoids ICMP-blocked VPS)
   CURL_TRAEFIK_LOOPBACK_IP   Numeric IP for curl --resolve when probing Traefik on loopback (default: 127.0.0.1)
   TRAEFIK_PUBLIC_NETWORK    Shared Docker network for Traefik + labeled stacks (default: proxy). Recreated by install if missing.
+  ORBYTALS_PORTAL_DOMAIN     Hostname for the nginx launch page (default: home.<ORBYTALS_APEX_DOMAIN>); add a public DNS record.
   VERIFY_COCKPIT             Set true to include Cockpit in verify (default: false)
+  VERIFY_STRICT_TLS          When not false, verify requires trusted Let's Encrypt certs (no curl -k); default true.
+  TRAEFIK_ACME_CASERVER      ACME directory URL (default: Let's Encrypt production).
+  TRAEFIK_ACME_WAIT_SECONDS  Max wait for trusted certs after install (default: 240).
+  TRAEFIK_ACME_RELAXED_FALLBACK  If true after timeout, run curl -k probes only (default: false).
+  MAILCOW_SKIP_LETS_ENCRYPT  Must stay y with Traefik edge; mail UI TLS is still LE from Traefik (default: y).
 EOF
 }
 

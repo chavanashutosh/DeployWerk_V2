@@ -20,6 +20,8 @@ services:
     environment:
       ACME_EMAIL: ${ACME_EMAIL:-postmaster@orbytals.com}
       TRAEFIK_PROVIDERS_DOCKER_NETWORK: ${TRAEFIK_PUBLIC_NETWORK:-proxy}
+      # Let's Encrypt production by default; override TRAEFIK_ACME_CASERVER in .env for staging only.
+      TRAEFIK_CERTIFICATESRESOLVERS_LE_ACME_CASERVER: ${TRAEFIK_ACME_CASERVER:-https://acme-v02.api.letsencrypt.org/directory}
     ports:
       - "80:80"
       - "443:443"
