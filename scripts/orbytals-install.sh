@@ -381,6 +381,31 @@ assert_udp_port_available_or_managed() {
   die "port conflict on udp/${port}"
 }
 
+# Cockpit often listens on COCKPIT_PORT via systemd socket activation (ss shows users:(("systemd",pid=1,...))).
+assert_cockpit_port_preflight() {
+  local port="${COCKPIT_PORT}" why="Cockpit host socket"
+  local listeners
+  listeners="$(port_listeners "$port")"
+  if [[ -z "$listeners" ]]; then
+    return
+  fi
+  if printf '%s' "$listeners" | grep -Eq '(docker-proxy|traefik|deploywerk-api|nginx|garage|forgejo|technitium|synapse|postfix|dovecot|portainer)'; then
+    warn "Port ${port} is already in use (${why}); looks like managed services. Continuing."
+    return
+  fi
+  if printf '%s' "$listeners" | grep -Eiq 'cockpit'; then
+    warn "Port ${port} is already in use (${why}); Cockpit is active. Continuing."
+    return
+  fi
+  if printf '%s' "$listeners" | grep -q 'systemd'; then
+    warn "Port ${port} is already in use (${why}); likely systemd socket activation (Cockpit). Continuing."
+    return
+  fi
+  echo "Port ${port} is already in use (${why})." >&2
+  echo "$listeners" >&2
+  die "port conflict on ${port}"
+}
+
 preflight_ports() {
   log "Preflight: checking for port conflicts"
   # Public ports
@@ -410,7 +435,7 @@ preflight_ports() {
   assert_port_available_or_managed "${DEPLOYWERK_NGINX_PORT}" "DeployWerk nginx"
   assert_port_available_or_managed "${MAILCOW_HTTP_PORT}" "Mailcow HTTP bind"
   assert_port_available_or_managed "${MAILCOW_HTTPS_PORT}" "Mailcow HTTPS bind"
-  assert_port_available_or_managed "${COCKPIT_PORT}" "Cockpit host socket"
+  assert_cockpit_port_preflight
   assert_port_available_or_managed "${GARAGE_S3_PORT}" "Garage S3"
   assert_port_available_or_managed "${GARAGE_WEB_PORT}" "Garage web"
   assert_port_available_or_managed "${GARAGE_ADMIN_PORT}" "Garage admin"

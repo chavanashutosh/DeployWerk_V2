@@ -439,6 +439,8 @@ DeployWerk only needs an **S3-compatible endpoint** (path-style is fine). Altern
 
 ### Port conflicts
 
+If **9292** is in use by **systemd** (Cockpit socket activation), the installer treats that as expected and continues with a warning. For a different process on 9292, set `COCKPIT_PORT` to another free port before running the installer.
+
 If the installer aborts on a port conflict, identify the owner:
 
 ```bash
