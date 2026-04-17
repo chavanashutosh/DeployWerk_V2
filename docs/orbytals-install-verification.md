@@ -4,7 +4,7 @@
 
 Public HTTPS is served by **Traefik** using **Let's Encrypt** through Traefik's **ACME** client (**HTTP-01** on port **80**). The installer does **not** run `certbot`. Certs live on the host at `/opt/traefik/acme/acme.json` (mounted into the Traefik container). **Port 80** must be reachable from the internet for issuance and renewal; Traefik redirects normal HTTP traffic to HTTPS except `/.well-known/acme-challenge`. If verification prints "TLS certificate verify skipped", ACME may still be completing or the chain is not yet trusted; confirm DNS **A/AAAA** for every hostname (including the **apex** domain) points at this server.
 
-**Loopback:** **`DEPLOYWERK_LOOPBACK_HOST`** may be **`127.0.0.1`** or **`localhost`** (interchangeable for nginx, API, Postgres URL, Mailcow binds, Garage/Technitium publishes). **`curl --resolve`** in verify uses **`CURL_TRAEFIK_LOOPBACK_IP`** (default **`127.0.0.1`**, numeric IP for compatibility).
+**Loopback:** **`DEPLOYWERK_LOOPBACK_HOST`** may be **`127.0.0.1`** or **`localhost`** (interchangeable for nginx, API, Postgres URL, SMTP). **Docker `ports:`** on the host must use a numeric IP; the installer writes **`127.0.0.1`** for Traefik/Garage/Technitium/Mailcow publish sides when the loopback host is a name. **`curl --resolve`** uses **`CURL_TRAEFIK_LOOPBACK_IP`** (default **`127.0.0.1`**).
 
 After `sudo bash scripts/orbytals-install.sh all`, the script runs **verify** steps: port summary, HTTPS checks through Traefik on `localhost:443` with `--resolve` (SNI), then loopback HTTP checks for DeployWerk and Garage.
 

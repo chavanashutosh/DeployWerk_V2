@@ -38,7 +38,8 @@ DEPLOYWERK_WORKER_SERVICE_FILE="${DEPLOYWERK_WORKER_SERVICE_FILE:-/etc/systemd/s
 DEPLOYWERK_NGINX_SITE="${DEPLOYWERK_NGINX_SITE:-/etc/nginx/sites-available/deploywerk.conf}"
 DEPLOYWERK_NGINX_ENABLED_SITE="${DEPLOYWERK_NGINX_ENABLED_SITE:-/etc/nginx/sites-enabled/deploywerk.conf}"
 # Loopback for API/nginx proxy targets, DATABASE_URL host, Mailcow SMTP, Garage & Technitium host port binds, etc.
-# Both "127.0.0.1" and "localhost" are acceptable (same OS loopback interface). Override either way, e.g.:
+# Both "127.0.0.1" and "localhost" are acceptable for nginx, Postgres URLs, Mailcow SMTP, etc. Docker "ports:"
+# host binds require a numeric IP — the script maps localhost/127.0.0.1 to 127.0.0.1 for those (see docker_host_bind_loopback_ip).
 #   export DEPLOYWERK_LOOPBACK_HOST=127.0.0.1
 # Mailcow UI binds default to the same value unless MAILCOW_HTTP_BIND / MAILCOW_HTTPS_BIND are set.
 DEPLOYWERK_LOOPBACK_HOST="${DEPLOYWERK_LOOPBACK_HOST:-localhost}"
@@ -149,6 +150,15 @@ canonical_loopback_or_self() {
     printf '%s' "127.0.0.1"
   else
     printf '%s' "$1"
+  fi
+}
+
+# Docker Compose "ports:" host side must be a numeric IP (not "localhost"); map loopback names to 127.0.0.1.
+docker_host_bind_loopback_ip() {
+  if is_ipv4_loopback_name "${DEPLOYWERK_LOOPBACK_HOST}"; then
+    printf '%s' "127.0.0.1"
+  else
+    printf '%s' "${DEPLOYWERK_LOOPBACK_HOST}"
   fi
 }
 
@@ -1014,6 +1024,8 @@ install_native_deploywerk() {
 }
 
 write_garage_config() {
+  local dock_bind
+  dock_bind="$(docker_host_bind_loopback_ip)"
   ensure_dir "${GARAGE_DIR}" "${GARAGE_DIR}/meta" "${GARAGE_DIR}/data"
   cat >"${GARAGE_CONFIG_FILE}" <<EOF
 metadata_dir = "/var/lib/garage/meta"
@@ -1022,7 +1034,7 @@ db_engine = "sqlite"
 
 replication_factor = 1
 rpc_bind_addr = "0.0.0.0:${GARAGE_RPC_PORT}"
-rpc_public_addr = "${DEPLOYWERK_LOOPBACK_HOST}:${GARAGE_RPC_PORT}"
+rpc_public_addr = "${dock_bind}:${GARAGE_RPC_PORT}"
 rpc_secret = "${GARAGE_RPC_SECRET}"
 
 [s3_api]
@@ -1041,6 +1053,8 @@ EOF
 }
 
 write_garage_compose() {
+  local dock_bind
+  dock_bind="$(docker_host_bind_loopback_ip)"
   ensure_dir "${GARAGE_DIR}"
   cat >"${GARAGE_COMPOSE_FILE}" <<EOF
 services:
@@ -1049,9 +1063,9 @@ services:
     container_name: garage
     restart: unless-stopped
     ports:
-      - "${DEPLOYWERK_LOOPBACK_HOST}:${GARAGE_S3_PORT}:${GARAGE_S3_PORT}"
-      - "${DEPLOYWERK_LOOPBACK_HOST}:${GARAGE_WEB_PORT}:${GARAGE_WEB_PORT}"
-      - "${DEPLOYWERK_LOOPBACK_HOST}:${GARAGE_ADMIN_PORT}:${GARAGE_ADMIN_PORT}"
+      - "${dock_bind}:${GARAGE_S3_PORT}:${GARAGE_S3_PORT}"
+      - "${dock_bind}:${GARAGE_WEB_PORT}:${GARAGE_WEB_PORT}"
+      - "${dock_bind}:${GARAGE_ADMIN_PORT}:${GARAGE_ADMIN_PORT}"
     volumes:
       - ${GARAGE_CONFIG_FILE}:/etc/garage.toml
       - ${GARAGE_DIR}/meta:/var/lib/garage/meta
@@ -1188,6 +1202,8 @@ bootstrap_garage() {
 }
 
 write_technitium_compose() {
+  local dock_bind
+  dock_bind="$(docker_host_bind_loopback_ip)"
   ensure_dir "${TECHNITIUM_DIR}"
   cat >"${TECHNITIUM_COMPOSE_FILE}" <<EOF
 services:
@@ -1201,7 +1217,7 @@ services:
     ports:
       - "${TECHNITIUM_DNS_PORT}:53/udp"
       - "${TECHNITIUM_DNS_PORT}:53/tcp"
-      - "${DEPLOYWERK_LOOPBACK_HOST}:${TECHNITIUM_HTTP_PORT}:5380"
+      - "${dock_bind}:${TECHNITIUM_HTTP_PORT}:5380"
     volumes:
       - ${TECHNITIUM_DIR}/config:/etc/dns
     networks:
@@ -1459,10 +1475,13 @@ ensure_mailcow_config() {
   fi
   ensure_conf_kv "$conf" MAILCOW_HOSTNAME "${ORBYTALS_MAIL_DOMAIN}"
   ensure_conf_kv "$conf" SKIP_LETS_ENCRYPT "y"
-  # HTTP(S)_BIND in mailcow.conf: loopback only here; use 127.0.0.1 or localhost (override MAILCOW_HTTP_BIND / MAILCOW_HTTPS_BIND).
-  ensure_conf_kv "$conf" HTTP_BIND "${MAILCOW_HTTP_BIND}"
+  # HTTP(S)_BIND: nginx-style localhost is fine, but Docker-published host sides need a numeric IP — normalize loopback names.
+  local hbind="${MAILCOW_HTTP_BIND}" hsbind="${MAILCOW_HTTPS_BIND}"
+  if is_ipv4_loopback_name "${hbind}"; then hbind="127.0.0.1"; fi
+  if is_ipv4_loopback_name "${hsbind}"; then hsbind="127.0.0.1"; fi
+  ensure_conf_kv "$conf" HTTP_BIND "${hbind}"
   ensure_conf_kv "$conf" HTTP_PORT "${MAILCOW_HTTP_PORT}"
-  ensure_conf_kv "$conf" HTTPS_BIND "${MAILCOW_HTTPS_BIND}"
+  ensure_conf_kv "$conf" HTTPS_BIND "${hsbind}"
   ensure_conf_kv "$conf" HTTPS_PORT "${MAILCOW_HTTPS_PORT}"
   ensure_conf_kv "$conf" DOCKER_COMPOSE_VERSION "native"
   ensure_conf_kv "$conf" TZ "${MAILCOW_TIMEZONE}"
@@ -1716,8 +1735,8 @@ Primary command:
   sudo bash scripts/orbytals-install.sh all
 
 Loopback / local binds (optional environment):
-  DEPLOYWERK_LOOPBACK_HOST   Host for API, nginx, DATABASE_URL, SMTP to Mailcow, Garage & Technitium
-                             Docker publishes. Both 127.0.0.1 and localhost are valid (default: localhost).
+  DEPLOYWERK_LOOPBACK_HOST   Host for API, nginx, DATABASE_URL, SMTP to Mailcow, etc. Use localhost or
+                             127.0.0.1 (default: localhost). Docker compose port binds use 127.0.0.1 when this is a loopback name.
   MAILCOW_HTTP_BIND          Override Mailcow HTTP bind (default: same as DEPLOYWERK_LOOPBACK_HOST)
   MAILCOW_HTTPS_BIND         Override Mailcow HTTPS bind (default: same as DEPLOYWERK_LOOPBACK_HOST)
   MAILCOW_IPV4_NETWORK       Pin Mailcow internal n.n.n prefix for n.n.n.0/24 (default: auto free /24)
