@@ -112,6 +112,28 @@ command_exists() {
   command -v "$1" >/dev/null 2>&1
 }
 
+# Transient "mirror sync in progress" / hash mismatch on apt indexes is common; retry before failing.
+apt_update_with_retry() {
+  local attempt=1 max_attempts=6 sleep_s=20
+  local -a apt_opts=(
+    -o "Acquire::Retries=5"
+    -o "Acquire::http::Timeout=120"
+    -o "Acquire::https::Timeout=120"
+  )
+  while [[ "${attempt}" -le "${max_attempts}" ]]; do
+    if apt-get update "${apt_opts[@]}"; then
+      return 0
+    fi
+    if [[ "${attempt}" -ge "${max_attempts}" ]]; then
+      break
+    fi
+    warn "apt-get update failed (attempt ${attempt}/${max_attempts}); often a mirror mid-sync or brief network issue. Retrying in ${sleep_s}s..."
+    attempt=$((attempt + 1))
+    sleep "${sleep_s}"
+  done
+  die "apt-get update failed after ${max_attempts} attempts. Wait a few minutes and re-run, or switch Ubuntu archive mirrors in /etc/apt/sources.list(.d)."
+}
+
 ensure_dir() {
   mkdir -p "$@"
 }
@@ -508,7 +530,8 @@ preflight_ports() {
 
 bootstrap_host() {
   log "Installing host packages"
-  apt update
+  export DEBIAN_FRONTEND=noninteractive
+  apt_update_with_retry
   apt install -y \
     ca-certificates \
     curl \
