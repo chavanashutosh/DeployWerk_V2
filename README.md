@@ -418,6 +418,10 @@ Cockpit-specific behavior in the installer:
 
 ## Troubleshooting (installer)
 
+### `/etc/orbytals/install.env: line N: …: command not found`
+
+The installer state file must be valid **bash** assignments. That error usually means a secret line was split (often a **newline inside a Garage S3 key** copied into the file). Remove the broken file and re-run prompts: `sudo rm -f /etc/orbytals/install.env`, then run the installer again (or pull an updated `scripts/orbytals-install.sh` that writes state with safe quoting and strips embedded newlines).
+
 ### Post-install `verify` shows HTTPS failures from the server itself
 
 `curl https://app.example.com` from **the same machine** often fails when DNS points at the server’s public IP but the router does **not** support hairpin NAT (TCP never reaches Traefik). The installer’s smoke checks therefore use **`curl --resolve …:443:127.0.0.1`** so Traefik is exercised on loopback with the correct hostname. Client machines still need correct **public DNS** (A/AAAA) to reach the site from the Internet.

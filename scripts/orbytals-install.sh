@@ -118,12 +118,19 @@ ensure_dir() {
 
 ensure_env_kv() {
   local file="$1" key="$2" val="$3"
+  # Never write raw newlines: a sourced install.env would execute continuation lines as commands.
+  val="${val//$'\r'/}"
+  val="${val//$'\n'/}"
   ensure_dir "$(dirname "$file")"
   touch "$file"
   local tmp
   tmp="$(mktemp)"
   grep -v "^${key}=" "$file" >"$tmp" 2>/dev/null || true
-  printf '%s=%s\n' "$key" "$val" >>"$tmp"
+  if [[ "${file}" == "${STATE_FILE}" ]]; then
+    printf '%s=%q\n' "$key" "$val" >>"$tmp"
+  else
+    printf '%s=%s\n' "$key" "$val" >>"$tmp"
+  fi
   mv "$tmp" "$file"
 }
 
@@ -937,8 +944,8 @@ bootstrap_garage() {
   if [[ -z "${key_output}" ]]; then
     key_output="$(garage_cli key create "${GARAGE_KEY_NAME}" 2>/dev/null || true)"
   fi
-  key_id="$(printf '%s\n' "${key_output}" | awk -F': ' '/Key ID/ {print $2; exit}')"
-  secret_key="$(printf '%s\n' "${key_output}" | awk -F': ' '/Secret key/ {print $2; exit}')"
+  key_id="$(printf '%s\n' "${key_output}" | awk -F': ' '/Key ID/ {print $2; exit}' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+  secret_key="$(printf '%s\n' "${key_output}" | awk -F': ' '/Secret key/ {print $2; exit}' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
   if [[ -z "${key_id}" || -z "${secret_key}" ]]; then
     docker logs garage --tail 250 >&2 || true
     die "could not extract Garage S3 credentials"
