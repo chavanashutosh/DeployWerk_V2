@@ -262,6 +262,7 @@ Useful follow-up commands:
 ```bash
 sudo bash scripts/orbytals-install.sh verify
 sudo bash scripts/orbytals-install.sh clean
+sudo bash scripts/orbytals-install.sh redeploy
 ```
 
 Managed install roots default to:
@@ -281,6 +282,40 @@ The installer assumes public DNS already points the following names at the Traef
 - `traefik.orbytals.com`
 - `cockpit.orbytals.com`
 - `chat.hermesapp.live`
+- `api.hermesapp.live`
+
+### URLs
+
+External public URLs (via Traefik):
+
+- `https://app.orbytals.com`
+- `https://api.orbytals.com` (API routes like `/api/v1/health`, `/api/v1/bootstrap`)
+- `https://mail.orbytals.com`
+- `https://git.orbytals.com`
+- `https://dns.orbytals.com` (Technitium web UI)
+- `https://traefik.orbytals.com`
+- `https://cockpit.orbytals.com`
+- `https://chat.hermesapp.live` (Matrix/Synapse, e.g. `/_matrix/client/versions`)
+- `https://api.hermesapp.live` (Synapse homeserver API, e.g. `/_matrix/client/versions`)
+
+Local-only URLs (host loopback):
+
+- `http://127.0.0.1:8080` (DeployWerk API)
+- `http://127.0.0.1:8085` (DeployWerk nginx front)
+- `http://127.0.0.1:18080` (Traefik dashboard local bind)
+- `http://127.0.0.1:3900` (Garage S3)
+- `http://127.0.0.1:5380` (Technitium web UI loopback bind)
+- `http://127.0.0.1:8082` and `https://127.0.0.1:8444` (Mailcow loopback binds)
+
+Internal Docker-network URLs (container-to-container):
+
+- `http://synapse:8008` (Traefik routes `chat.hermesapp.live` to this on the `proxy` network)
+
+### Matrix / mobile app connection
+
+- **Web chat**: `https://chat.hermesapp.live` (Element Web)
+- **Mobile app homeserver URL**: **`https://api.hermesapp.live`**
+  - `https://chat.hermesapp.live` also serves `/.well-known/matrix/client` and `/.well-known/matrix/server` for clients that support discovery.
 
 ### Ports
 

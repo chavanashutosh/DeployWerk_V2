@@ -24,6 +24,7 @@ ORBYTALS_DNS_DOMAIN="${ORBYTALS_DNS_DOMAIN:-dns.orbytals.com}"
 ORBYTALS_TRAEFIK_DOMAIN="${ORBYTALS_TRAEFIK_DOMAIN:-traefik.orbytals.com}"
 ORBYTALS_COCKPIT_DOMAIN="${ORBYTALS_COCKPIT_DOMAIN:-cockpit.orbytals.com}"
 HERMES_CHAT_DOMAIN="${HERMES_CHAT_DOMAIN:-chat.hermesapp.live}"
+HERMES_API_DOMAIN="${HERMES_API_DOMAIN:-api.hermesapp.live}"
 
 DEPLOYWERK_USER="${DEPLOYWERK_USER:-deploywerk}"
 DEPLOYWERK_HOME="${DEPLOYWERK_HOME:-/var/lib/deploywerk}"
@@ -90,6 +91,11 @@ ENABLE_STANDARD_DNS_PORT_53="${ENABLE_STANDARD_DNS_PORT_53:-false}"
 ENABLE_PUBLIC_MATRIX_FEDERATION_PORT="${ENABLE_PUBLIC_MATRIX_FEDERATION_PORT:-true}"
 COCKPIT_USE_NETWORKMANAGER="${COCKPIT_USE_NETWORKMANAGER:-true}"
 COCKPIT_PORT="${COCKPIT_PORT:-9292}"
+
+ELEMENT_DIR="${ELEMENT_DIR:-${SERVICE_ROOT}/element-web}"
+ELEMENT_COMPOSE_FILE="${ELEMENT_COMPOSE_FILE:-${ELEMENT_DIR}/docker-compose.yml}"
+ELEMENT_CONFIG_FILE="${ELEMENT_CONFIG_FILE:-${ELEMENT_DIR}/config.json}"
+ELEMENT_WELLKNOWN_DIR="${ELEMENT_WELLKNOWN_DIR:-${ELEMENT_DIR}/well-known}"
 
 die() {
   echo "error: $*" >&2
@@ -722,8 +728,29 @@ install_traefik() {
     docker logs "${TRAEFIK_CONTAINER_NAME}" --tail 200 || true
     die "Traefik failed to start"
   }
+  trigger_traefik_acme
 }
 
+trigger_traefik_acme() {
+  log "Triggering Traefik ACME (loopback SNI)"
+  # Any HTTPS request with correct SNI will trigger certificate acquisition for that host/router.
+  # We use -k because Traefik serves a default cert until ACME completes.
+  local hosts=(
+    "${ORBYTALS_APP_DOMAIN}"
+    "${ORBYTALS_API_DOMAIN}"
+    "${ORBYTALS_MAIL_DOMAIN}"
+    "${ORBYTALS_GIT_DOMAIN}"
+    "${ORBYTALS_DNS_DOMAIN}"
+    "${ORBYTALS_TRAEFIK_DOMAIN}"
+    "${ORBYTALS_COCKPIT_DOMAIN}"
+    "${HERMES_CHAT_DOMAIN}"
+    "${HERMES_API_DOMAIN}"
+  )
+  local h
+  for h in "${hosts[@]}"; do
+    curl -kfsSI --max-time 10 --resolve "${h}:443:127.0.0.1" "https://${h}/" >/dev/null 2>&1 || true
+  done
+}
 ensure_deploywerk_user() {
   if ! id -u "${DEPLOYWERK_USER}" >/dev/null 2>&1; then
     useradd --system --create-home --home-dir "${DEPLOYWERK_HOME}" --shell /usr/sbin/nologin "${DEPLOYWERK_USER}"
@@ -1163,9 +1190,9 @@ patch_synapse_yaml() {
   local sy="$1"
   cp -a "$sy" "${sy}.bak.$(date +%s)" || true
   if grep -qE '^public_baseurl:' "$sy"; then
-    sed -i 's|^public_baseurl:.*|public_baseurl: "https://'"${HERMES_CHAT_DOMAIN}"'/"|' "$sy"
+    sed -i 's|^public_baseurl:.*|public_baseurl: "https://'"${HERMES_API_DOMAIN}"'/"|' "$sy"
   else
-    printf '\npublic_baseurl: "https://%s/"\n' "${HERMES_CHAT_DOMAIN}" >>"$sy"
+    printf '\npublic_baseurl: "https://%s/"\n' "${HERMES_API_DOMAIN}" >>"$sy"
   fi
   if grep -qE '^serve_server_wellknown:' "$sy"; then
     sed -i 's|^serve_server_wellknown:.*|serve_server_wellknown: true|' "$sy"
@@ -1183,7 +1210,7 @@ generate_synapse_config() {
   ensure_dir "${SYNAPSE_CONFIG_DIR}"
   if [[ ! -f "${SYNAPSE_CONFIG_DIR}/homeserver.yaml" ]]; then
     docker run --rm \
-      -e SYNAPSE_SERVER_NAME="${HERMES_CHAT_DOMAIN}" \
+      -e SYNAPSE_SERVER_NAME="${HERMES_API_DOMAIN}" \
       -e SYNAPSE_REPORT_STATS=no \
       -v "${SYNAPSE_CONFIG_DIR}:/data" \
       matrixdotorg/synapse:latest generate
@@ -1208,7 +1235,7 @@ services:
     labels:
       - "traefik.enable=true"
       - "traefik.docker.network=${TRAEFIK_PUBLIC_NETWORK}"
-      - "traefik.http.routers.synapse.rule=Host(\`${HERMES_CHAT_DOMAIN}\`)"
+      - "traefik.http.routers.synapse.rule=Host(\`${HERMES_API_DOMAIN}\`)"
       - "traefik.http.routers.synapse.entrypoints=websecure"
       - "traefik.http.routers.synapse.tls.certresolver=le"
       - "traefik.http.routers.synapse.middlewares=secure-headers@file"
@@ -1218,6 +1245,80 @@ networks:
   ${TRAEFIK_PUBLIC_NETWORK}:
     external: true
 EOF
+}
+
+write_element_web_compose() {
+  ensure_dir "${ELEMENT_DIR}" "${ELEMENT_WELLKNOWN_DIR}/matrix"
+
+  # Element config points clients at the Synapse homeserver.
+  cat >"${ELEMENT_CONFIG_FILE}" <<EOF
+{
+  \"default_server_config\": {
+    \"m.homeserver\": {
+      \"base_url\": \"https://${HERMES_API_DOMAIN}\",
+      \"server_name\": \"${HERMES_API_DOMAIN}\"
+    }
+  },
+  \"disable_custom_urls\": true,
+  \"disable_guests\": true
+}
+EOF
+
+  # Matrix well-known endpoints (served from chat.hermesapp.live)
+  cat >"${ELEMENT_WELLKNOWN_DIR}/matrix/client" <<EOF
+{ \"m.homeserver\": { \"base_url\": \"https://${HERMES_API_DOMAIN}\" } }
+EOF
+  cat >"${ELEMENT_WELLKNOWN_DIR}/matrix/server" <<EOF
+{ \"m.server\": \"${HERMES_API_DOMAIN}:8448\" }
+EOF
+
+  cat >"${ELEMENT_COMPOSE_FILE}" <<EOF
+services:
+  element-web:
+    image: vectorim/element-web:latest
+    container_name: element-web
+    restart: unless-stopped
+    volumes:
+      - ${ELEMENT_CONFIG_FILE}:/app/config.json:ro
+    networks:
+      - ${TRAEFIK_PUBLIC_NETWORK}
+    labels:
+      - \"traefik.enable=true\"
+      - \"traefik.docker.network=${TRAEFIK_PUBLIC_NETWORK}\"
+      - \"traefik.http.routers.element.rule=Host(\\`${HERMES_CHAT_DOMAIN}\\`)\"
+      - \"traefik.http.routers.element.entrypoints=websecure\"
+      - \"traefik.http.routers.element.tls.certresolver=le\"
+      - \"traefik.http.routers.element.middlewares=secure-headers@file\"
+      - \"traefik.http.services.element.loadbalancer.server.port=80\"
+
+  matrix-wellknown:
+    image: nginx:alpine
+    container_name: matrix-wellknown
+    restart: unless-stopped
+    volumes:
+      - ${ELEMENT_WELLKNOWN_DIR}:/usr/share/nginx/html/.well-known:ro
+    networks:
+      - ${TRAEFIK_PUBLIC_NETWORK}
+    labels:
+      - \"traefik.enable=true\"
+      - \"traefik.docker.network=${TRAEFIK_PUBLIC_NETWORK}\"
+      - \"traefik.http.routers.matrix-wellknown.rule=Host(\\`${HERMES_CHAT_DOMAIN}\\`) && PathPrefix(\\`/.well-known/matrix\\`)\"
+      - \"traefik.http.routers.matrix-wellknown.priority=100\"
+      - \"traefik.http.routers.matrix-wellknown.entrypoints=websecure\"
+      - \"traefik.http.routers.matrix-wellknown.tls.certresolver=le\"
+      - \"traefik.http.routers.matrix-wellknown.middlewares=secure-headers@file\"
+      - \"traefik.http.services.matrix-wellknown.loadbalancer.server.port=80\"
+
+networks:
+  ${TRAEFIK_PUBLIC_NETWORK}:
+    external: true
+EOF
+}
+
+install_element_web() {
+  log \"Installing Element Web\"
+  write_element_web_compose
+  compose_up_or_die \"${ELEMENT_DIR}\" \"Element Web\" \"element-web\"
 }
 
 install_synapse() {
@@ -1398,7 +1499,9 @@ verify_install() {
   verify_traefik_https "${ORBYTALS_DNS_DOMAIN}" "/"
   verify_traefik_https "${ORBYTALS_TRAEFIK_DOMAIN}" "/"
   verify_traefik_https "${ORBYTALS_COCKPIT_DOMAIN}" "/"
-  verify_traefik_https "${HERMES_CHAT_DOMAIN}" "/_matrix/client/versions"
+  verify_traefik_https "${HERMES_API_DOMAIN}" "/_matrix/client/versions"
+  verify_traefik_https "${HERMES_CHAT_DOMAIN}" "/"
+  verify_traefik_https "${HERMES_CHAT_DOMAIN}" "/.well-known/matrix/client"
   verify_traefik_https "${HERMES_CHAT_DOMAIN}" "/.well-known/matrix/server"
   verify_url "http://${DEPLOYWERK_LOOPBACK_HOST}:${DEPLOYWERK_NGINX_PORT}"
   verify_url "http://${DEPLOYWERK_LOOPBACK_HOST}:${DEPLOYWERK_API_PORT}/api/v1/health"
@@ -1412,6 +1515,36 @@ compose_down_if_present() {
   fi
 }
 
+cmd_redeploy() {
+  require_root
+  collect_inputs
+  log "Redeploying managed stacks (down -> prune -> up)"
+
+  compose_down_if_present "${EDGE_ROOT}/traefik"
+  compose_down_if_present "${GARAGE_DIR}"
+  compose_down_if_present "${TECHNITIUM_DIR}"
+  compose_down_if_present "${FORGEJO_DIR}"
+  compose_down_if_present "${SYNAPSE_DIR}"
+  compose_down_if_present "${ELEMENT_DIR}"
+  if [[ -d "${MAILCOW_DIR}" ]]; then
+    mailcow_compose down --remove-orphans || true
+  fi
+
+  docker system prune -f || true
+
+  install_traefik
+  install_garage
+  bootstrap_garage
+  install_technitium
+  install_forgejo
+  install_synapse
+  install_element_web
+  install_mailcow
+  install_native_deploywerk
+
+  verify_install
+}
+
 clean_install() {
   log "Cleaning managed services"
   compose_down_if_present "${EDGE_ROOT}/traefik"
@@ -1419,6 +1552,7 @@ clean_install() {
   compose_down_if_present "${TECHNITIUM_DIR}"
   compose_down_if_present "${FORGEJO_DIR}"
   compose_down_if_present "${SYNAPSE_DIR}"
+  compose_down_if_present "${ELEMENT_DIR}"
   if [[ -d "${MAILCOW_DIR}" ]]; then
     mailcow_compose down --remove-orphans || true
   fi
@@ -1446,6 +1580,7 @@ cmd_install() {
   install_technitium
   install_forgejo
   install_synapse
+  install_element_web
   install_mailcow
   install_native_deploywerk
 }
@@ -1461,6 +1596,7 @@ Commands:
   install   Install or update the full Orbytals stack
   verify    Verify managed services and public URLs
   clean     Remove the managed Orbytals install footprint
+  redeploy  Down stacks + prune + up + verify (Docker services)
   all       Install/update then verify
 
 Primary command:
@@ -1474,6 +1610,7 @@ main() {
     install) shift; cmd_install "$@" ;;
     verify) shift; verify_install "$@" ;;
     clean) shift; clean_install "$@" ;;
+    redeploy) shift; cmd_redeploy "$@" ;;
     all) shift; cmd_all "$@" ;;
     ""|-h|--help) usage ;;
     *) die "unknown command: $sub" ;;
