@@ -163,8 +163,43 @@ generate_alpha_secret() {
   openssl rand -hex 24 | tr -d '\n'
 }
 
+# install.env is sourced as bash; orphan lines (e.g. a split secret on its own line) run as commands.
+# Keep only blank lines, comments, and KEY=value (optional leading "export ") before sourcing.
+sanitize_state_file_for_source() {
+  [[ -f "${STATE_FILE}" ]] || return 0
+  local tmp bad=0
+  tmp="$(mktemp)"
+  while IFS= read -r line || [[ -n "${line}" ]]; do
+    line="${line//$'\r'/}"
+    if [[ -z "${line}" ]]; then
+      printf '\n' >>"${tmp}"
+      continue
+    fi
+    if [[ "${line}" =~ ^[[:space:]]*# ]]; then
+      printf '%s\n' "${line}" >>"${tmp}"
+      continue
+    fi
+    local raw="${line}"
+    if [[ "${line}" =~ ^[[:space:]]*export[[:space:]]+(.*)$ ]]; then
+      raw="${BASH_REMATCH[1]}"
+      raw="${raw#"${raw%%[![:space:]]*}"}"
+    fi
+    if [[ "${raw}" =~ ^[A-Za-z_][A-Za-z0-9_]*= ]]; then
+      printf '%s\n' "${line}" >>"${tmp}"
+    else
+      bad=$((bad + 1))
+    fi
+  done <"${STATE_FILE}"
+  if [[ "${bad}" -gt 0 ]]; then
+    warn "Removed ${bad} invalid line(s) from ${STATE_FILE} (orphan text or lines without KEY=value). Often caused by a pasted secret splitting across lines; fix values or delete the file and re-run prompts."
+    install -m 600 "${tmp}" "${STATE_FILE}"
+  fi
+  rm -f "${tmp}"
+}
+
 load_state() {
   if [[ -f "${STATE_FILE}" ]]; then
+    sanitize_state_file_for_source
     # shellcheck disable=SC1090
     source "${STATE_FILE}"
   fi

@@ -420,7 +420,7 @@ Cockpit-specific behavior in the installer:
 
 ### `/etc/orbytals/install.env: line N: …: command not found`
 
-The installer state file must be valid **bash** assignments. That error usually means a secret line was split (often a **newline inside a Garage S3 key** copied into the file). Remove the broken file and re-run prompts: `sudo rm -f /etc/orbytals/install.env`, then run the installer again (or pull an updated `scripts/orbytals-install.sh` that writes state with safe quoting and strips embedded newlines).
+That usually means a line in the state file was not a valid `KEY=value` assignment (often a **secret split across lines**, e.g. part of a Garage key on its own row). Current installers **strip invalid lines** and rewrite `/etc/orbytals/install.env` before sourcing it, so rerunning `scripts/orbytals-install.sh` should clear the error. If a secret was truncated, remove the affected key from the file or run `sudo rm -f /etc/orbytals/install.env` and run the installer again so prompts regenerate state.
 
 ### Post-install `verify` shows HTTPS failures from the server itself
 
