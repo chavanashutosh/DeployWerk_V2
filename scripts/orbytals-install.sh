@@ -1284,13 +1284,13 @@ services:
     networks:
       - ${TRAEFIK_PUBLIC_NETWORK}
     labels:
-      - \"traefik.enable=true\"
-      - \"traefik.docker.network=${TRAEFIK_PUBLIC_NETWORK}\"
-      - \"traefik.http.routers.element.rule=Host(\\`${HERMES_CHAT_DOMAIN}\\`)\"
-      - \"traefik.http.routers.element.entrypoints=websecure\"
-      - \"traefik.http.routers.element.tls.certresolver=le\"
-      - \"traefik.http.routers.element.middlewares=secure-headers@file\"
-      - \"traefik.http.services.element.loadbalancer.server.port=80\"
+      - "traefik.enable=true"
+      - "traefik.docker.network=${TRAEFIK_PUBLIC_NETWORK}"
+      - "traefik.http.routers.element.rule=Host(\`${HERMES_CHAT_DOMAIN}\`)"
+      - "traefik.http.routers.element.entrypoints=websecure"
+      - "traefik.http.routers.element.tls.certresolver=le"
+      - "traefik.http.routers.element.middlewares=secure-headers@file"
+      - "traefik.http.services.element.loadbalancer.server.port=80"
 
   matrix-wellknown:
     image: nginx:alpine
@@ -1301,14 +1301,14 @@ services:
     networks:
       - ${TRAEFIK_PUBLIC_NETWORK}
     labels:
-      - \"traefik.enable=true\"
-      - \"traefik.docker.network=${TRAEFIK_PUBLIC_NETWORK}\"
-      - \"traefik.http.routers.matrix-wellknown.rule=Host(\\`${HERMES_CHAT_DOMAIN}\\`) && PathPrefix(\\`/.well-known/matrix\\`)\"
-      - \"traefik.http.routers.matrix-wellknown.priority=100\"
-      - \"traefik.http.routers.matrix-wellknown.entrypoints=websecure\"
-      - \"traefik.http.routers.matrix-wellknown.tls.certresolver=le\"
-      - \"traefik.http.routers.matrix-wellknown.middlewares=secure-headers@file\"
-      - \"traefik.http.services.matrix-wellknown.loadbalancer.server.port=80\"
+      - "traefik.enable=true"
+      - "traefik.docker.network=${TRAEFIK_PUBLIC_NETWORK}"
+      - "traefik.http.routers.matrix-wellknown.rule=Host(\`${HERMES_CHAT_DOMAIN}\`) && PathPrefix(\`/.well-known/matrix\`)"
+      - "traefik.http.routers.matrix-wellknown.priority=100"
+      - "traefik.http.routers.matrix-wellknown.entrypoints=websecure"
+      - "traefik.http.routers.matrix-wellknown.tls.certresolver=le"
+      - "traefik.http.routers.matrix-wellknown.middlewares=secure-headers@file"
+      - "traefik.http.services.matrix-wellknown.loadbalancer.server.port=80"
 
 networks:
   ${TRAEFIK_PUBLIC_NETWORK}:
@@ -1317,9 +1317,9 @@ EOF
 }
 
 install_element_web() {
-  log \"Installing Element Web\"
+  log "Installing Element Web"
   write_element_web_compose
-  compose_up_or_die \"${ELEMENT_DIR}\" \"Element Web\" \"element-web\"
+  compose_up_or_die "${ELEMENT_DIR}" "Element Web" "element-web"
 }
 
 install_synapse() {
