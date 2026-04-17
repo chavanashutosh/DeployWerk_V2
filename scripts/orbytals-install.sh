@@ -60,6 +60,8 @@ GARAGE_RPC_PORT="${GARAGE_RPC_PORT:-3901}"
 GARAGE_WEB_PORT="${GARAGE_WEB_PORT:-3902}"
 GARAGE_ADMIN_PORT="${GARAGE_ADMIN_PORT:-3903}"
 GARAGE_ENDPOINT_URL="${GARAGE_ENDPOINT_URL:-http://127.0.0.1:${GARAGE_S3_PORT}}"
+# Required by current Garage images for [s3_web]; suffix for website-style bucket hosts (Garage configuration reference).
+GARAGE_S3_WEB_ROOT_DOMAIN="${GARAGE_S3_WEB_ROOT_DOMAIN:-.web.garage.localhost}"
 GARAGE_REGION="${GARAGE_REGION:-garage}"
 GARAGE_BUCKET_NAME="${GARAGE_BUCKET_NAME:-deploywerk}"
 GARAGE_KEY_NAME="${GARAGE_KEY_NAME:-deploywerk-key}"
@@ -776,6 +778,7 @@ api_bind_addr = "0.0.0.0:${GARAGE_S3_PORT}"
 
 [s3_web]
 bind_addr = "0.0.0.0:${GARAGE_WEB_PORT}"
+root_domain = "${GARAGE_S3_WEB_ROOT_DOMAIN}"
 
 [admin]
 api_bind_addr = "0.0.0.0:${GARAGE_ADMIN_PORT}"

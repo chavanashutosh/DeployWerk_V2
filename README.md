@@ -429,6 +429,14 @@ docker ps --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}'
 docker logs garage --tail 200
 ```
 
+### Garage restarts with `missing field root_domain` under `[s3_web]`
+
+Recent Garage releases require `root_domain` in the `[s3_web]` section of `garage.toml`. The installer writes a default (`.web.garage.localhost`); set `GARAGE_S3_WEB_ROOT_DOMAIN` before install if you use a real DNS suffix for bucket websites. If you upgraded from an older generated config, add `root_domain` next to `bind_addr` under `[s3_web]` and run `docker compose up -d` again in the Garage directory (often `/opt/orbytals/garage` or `GARAGE_DIR`).
+
+### Garage vs other object storage
+
+DeployWerk only needs an **S3-compatible endpoint** (path-style is fine). Alternatives to self-hosted Garage include **MinIO** (already used in repo `docker-compose` for local dev), **AWS S3**, **Cloudflare R2**, or any provider with an access key and bucket. Point DeployWerk’s storage settings at that endpoint instead of Garage if you prefer not to run Garage at all.
+
 ### Port conflicts
 
 If the installer aborts on a port conflict, identify the owner:
