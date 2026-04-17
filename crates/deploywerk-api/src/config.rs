@@ -32,30 +32,30 @@ fn optional_integration_url(var: &str) -> Option<String> {
 ///
 /// | Slot | Default |
 /// |------|---------|
-/// | Traefik dashboard | `http://127.0.0.1:8080` |
-/// | Portainer | `https://127.0.0.1:9443` (self-signed TLS; browser may warn) |
-/// | Forgejo | `http://127.0.0.1:3000` |
-/// | Technitium admin | `http://127.0.0.1:5380` |
-/// | Mailcow web | `https://127.0.0.1:8444` |
-/// | Matrix client | `http://127.0.0.1:8088` |
+/// | Traefik dashboard | `http://localhost:8080` |
+/// | Portainer | `https://localhost:9443` (self-signed TLS; browser may warn) |
+/// | Forgejo | `http://localhost:3000` |
+/// | Technitium admin | `http://localhost:5380` |
+/// | Mailcow web | `https://localhost:8444` |
+/// | Matrix client | `http://localhost:8088` |
 pub(crate) fn merge_local_integration_defaults(urls: &mut IntegrationUrls) {
     if urls.traefik_dashboard_url.is_none() {
-        urls.traefik_dashboard_url = Some("http://127.0.0.1:8080".into());
+        urls.traefik_dashboard_url = Some("http://localhost:8080".into());
     }
     if urls.portainer_url.is_none() {
-        urls.portainer_url = Some("https://127.0.0.1:9443".into());
+        urls.portainer_url = Some("https://localhost:9443".into());
     }
     if urls.forgejo_url.is_none() {
-        urls.forgejo_url = Some("http://127.0.0.1:3000".into());
+        urls.forgejo_url = Some("http://localhost:3000".into());
     }
     if urls.technitium_url.is_none() {
-        urls.technitium_url = Some("http://127.0.0.1:5380".into());
+        urls.technitium_url = Some("http://localhost:5380".into());
     }
     if urls.mailcow_url.is_none() {
-        urls.mailcow_url = Some("https://127.0.0.1:8444".into());
+        urls.mailcow_url = Some("https://localhost:8444".into());
     }
     if urls.matrix_client_url.is_none() {
-        urls.matrix_client_url = Some("http://127.0.0.1:8088".into());
+        urls.matrix_client_url = Some("http://localhost:8088".into());
     }
 }
 
@@ -104,9 +104,9 @@ pub struct Config {
     pub authentik_client_id: Option<String>,
     pub authentik_client_secret: Option<String>,
     pub authentik_redirect_uri: Option<String>,
-    /// Full Authentik admin UI URL (e.g. `http://127.0.0.1:9000/if/admin/`). Overrides derived URL.
+    /// Full Authentik admin UI URL (e.g. `http://localhost:9000/if/admin/`). Overrides derived URL.
     pub authentik_admin_url: Option<String>,
-    /// Authentik origin without path (e.g. `http://127.0.0.1:9000`). Used with issuer to derive admin URL.
+    /// Authentik origin without path (e.g. `http://localhost:9000`). Used with issuer to derive admin URL.
     pub authentik_browser_base_url: Option<String>,
     /// Bearer token for inbound SCIM (`Authorization: Bearer …`).
     pub deploywerk_scim_bearer_token: Option<String>,
@@ -140,7 +140,7 @@ pub struct Config {
     pub public_app_url: Option<String>,
     /// When true, send best-effort SMTP mail after sensitive super-admin mutations (requires SMTP).
     pub admin_action_emails_enabled: bool,
-    /// When true, unset integration URLs get 127.0.0.1 presets. Set via `DEPLOYWERK_LOCAL_SERVICE_DEFAULTS`, or defaults on in `APP_ENV=development` when unset.
+    /// When true, unset integration URLs get localhost presets. Set via `DEPLOYWERK_LOCAL_SERVICE_DEFAULTS`, or defaults on in `APP_ENV=development` when unset.
     pub local_service_defaults: bool,
     /// Links shown under Platform integrations (bootstrap + UI).
     pub integration_urls: IntegrationUrls,
@@ -452,7 +452,7 @@ impl Config {
 
         Self {
             database_url: env::var("DATABASE_URL").unwrap_or_else(|_| {
-                "postgresql://deploywerk:deploywerk@127.0.0.1:5432/deploywerk".into()
+                "postgresql://deploywerk:deploywerk@localhost:5432/deploywerk".into()
             }),
             jwt_secret,
             server_key_encryption_key,
@@ -568,11 +568,11 @@ mod integration_defaults_tests {
     fn merge_local_defaults_fills_empty_slots() {
         let mut u = IntegrationUrls::default();
         merge_local_integration_defaults(&mut u);
-        assert_eq!(u.traefik_dashboard_url.as_deref(), Some("http://127.0.0.1:8080"));
-        assert_eq!(u.portainer_url.as_deref(), Some("https://127.0.0.1:9443"));
-        assert_eq!(u.forgejo_url.as_deref(), Some("http://127.0.0.1:3000"));
-        assert_eq!(u.technitium_url.as_deref(), Some("http://127.0.0.1:5380"));
-        assert_eq!(u.mailcow_url.as_deref(), Some("https://127.0.0.1:8444"));
+        assert_eq!(u.traefik_dashboard_url.as_deref(), Some("http://localhost:8080"));
+        assert_eq!(u.portainer_url.as_deref(), Some("https://localhost:9443"));
+        assert_eq!(u.forgejo_url.as_deref(), Some("http://localhost:3000"));
+        assert_eq!(u.technitium_url.as_deref(), Some("http://localhost:5380"));
+        assert_eq!(u.mailcow_url.as_deref(), Some("https://localhost:8444"));
         assert!(u.matrix_client_url.is_none());
     }
 
@@ -584,6 +584,6 @@ mod integration_defaults_tests {
         };
         merge_local_integration_defaults(&mut u);
         assert_eq!(u.forgejo_url.as_deref(), Some("http://custom:9000"));
-        assert_eq!(u.portainer_url.as_deref(), Some("https://127.0.0.1:9443"));
+        assert_eq!(u.portainer_url.as_deref(), Some("https://localhost:9443"));
     }
 }

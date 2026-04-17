@@ -8,7 +8,7 @@ const repoRoot = fileURLToPath(new URL("..", import.meta.url));
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, repoRoot, "");
   const apiProxyTarget =
-    env.DEPLOYWERK_API_PROXY?.trim() || "http://127.0.0.1:8080";
+    env.DEPLOYWERK_API_PROXY?.trim() || "http://localhost:8080";
 
   return {
     // Load `.env` from repo root so `VITE_*` matches the API `.env`.

@@ -88,5 +88,5 @@ http:
 # - noop@internal: built-in Traefik empty service; used only with redirect middlewares.
 #   If noop@internal is unavailable in your version, use a tiny redirect-only router without a backend
 #   or consult Traefik docs for your release.
-# - Ensure firewall allows Traefik → host:8085 if you bind nginx to 127.0.0.1 only (Docker bridge
+# - Ensure firewall allows Traefik → host:8085 if you bind nginx to localhost only (Docker bridge
 #   to host should still reach 172.17.0.1:8085 on Linux).

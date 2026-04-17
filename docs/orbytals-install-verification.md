@@ -4,19 +4,21 @@
 
 Public HTTPS is served by **Traefik** using **Let's Encrypt** through Traefik's **ACME** client (**HTTP-01** on port **80**). The installer does **not** run `certbot`. Certs live on the host at `/opt/traefik/acme/acme.json` (mounted into the Traefik container). **Port 80** must be reachable from the internet for issuance and renewal; Traefik redirects normal HTTP traffic to HTTPS except `/.well-known/acme-challenge`. If verification prints "TLS certificate verify skipped", ACME may still be completing or the chain is not yet trusted; confirm DNS **A/AAAA** for every hostname (including the **apex** domain) points at this server.
 
-After `sudo bash scripts/orbytals-install.sh all`, the script runs **verify** steps: port summary, HTTPS checks through Traefik on `127.0.0.1:443` with `--resolve` (SNI), then loopback HTTP checks for DeployWerk and Garage.
+**Loopback:** **`DEPLOYWERK_LOOPBACK_HOST`** may be **`127.0.0.1`** or **`localhost`** (interchangeable for nginx, API, Postgres URL, Mailcow binds, Garage/Technitium publishes). **`curl --resolve`** in verify uses **`CURL_TRAEFIK_LOOPBACK_IP`** (default **`127.0.0.1`**, numeric IP for compatibility).
+
+After `sudo bash scripts/orbytals-install.sh all`, the script runs **verify** steps: port summary, HTTPS checks through Traefik on `localhost:443` with `--resolve` (SNI), then loopback HTTP checks for DeployWerk and Garage.
 
 ## How to read the results
 
 | Check | Healthy sign | Your run (example) |
 |--------|----------------|-------------------|
-| `http://127.0.0.1:8085` | `HTTP/1.1 200` from nginx | OK |
-| `http://127.0.0.1:8080/api/v1/health` | `HTTP/1.1 200` JSON | OK |
-| `http://127.0.0.1:3900` (Garage) | Any HTTP (often `403` on `/`) or TCP open | OK (`403` is normal for unauthenticated S3 root) |
+| `http://localhost:8085` | `HTTP/1.1 200` from nginx | OK |
+| `http://localhost:8080/api/v1/health` | `HTTP/1.1 200` JSON | OK |
+| `http://localhost:3900` (Garage) | Any HTTP (often `403` on `/`) or TCP open | OK (`403` is normal for unauthenticated S3 root) |
 | `https://traefik.<domain>/` | `401` with `www-authenticate: Basic` (dashboard auth) | OK |
 | `https://app.<domain>/` via Traefik | Any HTTP response within timeout (ideally `200` / `304`) | **Timeout** → see below |
 | `https://api.<domain>/api/v1/bootstrap` | Same | **Timeout** → same root cause |
-| `https://cockpit.<domain>/` | Same | **Timeout** → UFW + Traefik→host |
+| `https://cockpit.<domain>/` | Same | **Timeout** → UFW + Traefik→host (installer **`verify`** skips this unless **`VERIFY_COCKPIT=true`**) |
 | `https://mail.<domain>/` etc. | `200`–`499` counts as “Traefik answered” | `404` → Traefik reached default/no router or backend; still worth tuning |
 
 The verify helper treats **any** HTTP status line as success for Traefik HTTPS checks (including `404`), because it proves Traefik terminated TLS and routed somewhere. **Timeouts** mean no HTTP response (wrong upstream, firewall drop, or upstream not listening on the address Traefik uses).
@@ -78,7 +80,7 @@ These rules allow **containers** (e.g. Traefik) to reach **services bound on the
 
 ### Loopback-only (no WAN rule)
 
-These are bound to **`127.0.0.1`** (or otherwise not exposed on `0.0.0.0`) in the default layout; **do not** need to be opened on a perimeter firewall:
+These are bound to **`localhost`** (or otherwise not exposed on `0.0.0.0`) in the default layout; **do not** need to be opened on a perimeter firewall:
 
 | Port (default) | Purpose |
 |----------------|---------|
@@ -99,7 +101,7 @@ These are bound to **`127.0.0.1`** (or otherwise not exposed on `0.0.0.0`) in th
 
 ## Why `app` / `api` / `cockpit` timed out (common on Linux)
 
-1. **DeployWerk nginx** was only listening on **`127.0.0.1:8085`**, while Traefik (in Docker) calls the host using the **Docker bridge gateway** (often `172.17.0.1`). Traffic to `172.17.0.1:8085` never hit a listening socket → packets dropped or hanging → **curl timeout**.
+1. **DeployWerk nginx** was only listening on **`localhost:8085`**, while Traefik (in Docker) calls the host using the **Docker bridge gateway** (often `172.17.0.1`). Traffic to `172.17.0.1:8085` never hit a listening socket → packets dropped or hanging → **curl timeout**.
 
 2. **UFW** default **deny incoming** blocks Docker → host ports unless allowed. A previous **`ufw deny` on the Cockpit port** also blocked Traefik → Cockpit on the host.
 

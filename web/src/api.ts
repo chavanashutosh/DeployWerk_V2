@@ -190,7 +190,7 @@ export type ValidateServerResponse = {
 
 /** Instance operator links from `GET /api/v1/bootstrap` (`DEPLOYWERK_INTEGRATION_*`). */
 export type PlatformIntegrationsBootstrap = {
-  /** True when API applied DEPLOYWERK_LOCAL_SERVICE_DEFAULTS (127.0.0.1 preset). */
+  /** True when API applied DEPLOYWERK_LOCAL_SERVICE_DEFAULTS (localhost preset). */
   localServiceDefaults?: boolean;
   forgejoUrl?: string | null;
   mailcowUrl?: string | null;

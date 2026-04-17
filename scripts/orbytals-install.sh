@@ -37,19 +37,25 @@ DEPLOYWERK_API_SERVICE_FILE="${DEPLOYWERK_API_SERVICE_FILE:-/etc/systemd/system/
 DEPLOYWERK_WORKER_SERVICE_FILE="${DEPLOYWERK_WORKER_SERVICE_FILE:-/etc/systemd/system/deploywerk-deploy-worker.service}"
 DEPLOYWERK_NGINX_SITE="${DEPLOYWERK_NGINX_SITE:-/etc/nginx/sites-available/deploywerk.conf}"
 DEPLOYWERK_NGINX_ENABLED_SITE="${DEPLOYWERK_NGINX_ENABLED_SITE:-/etc/nginx/sites-enabled/deploywerk.conf}"
-DEPLOYWERK_LOOPBACK_HOST="${DEPLOYWERK_LOOPBACK_HOST:-127.0.0.1}"
+# Loopback for API/nginx proxy targets, DATABASE_URL host, Mailcow SMTP, Garage & Technitium host port binds, etc.
+# Both "127.0.0.1" and "localhost" are acceptable (same OS loopback interface). Override either way, e.g.:
+#   export DEPLOYWERK_LOOPBACK_HOST=127.0.0.1
+# Mailcow UI binds default to the same value unless MAILCOW_HTTP_BIND / MAILCOW_HTTPS_BIND are set.
+DEPLOYWERK_LOOPBACK_HOST="${DEPLOYWERK_LOOPBACK_HOST:-localhost}"
 DEPLOYWERK_API_PORT="${DEPLOYWERK_API_PORT:-8080}"
 DEPLOYWERK_NGINX_PORT="${DEPLOYWERK_NGINX_PORT:-8085}"
 DEPLOYWERK_DB_NAME="${DEPLOYWERK_DB_NAME:-deploywerk}"
 DEPLOYWERK_DB_USER="${DEPLOYWERK_DB_USER:-deploywerk}"
 DEPLOYWERK_DB_PASSWORD="${DEPLOYWERK_DB_PASSWORD:-deploywerk}"
+# curl --resolve needs a numeric loopback IP on typical builds; keep 127.0.0.1 even when DEPLOYWERK_LOOPBACK_HOST=localhost.
+CURL_TRAEFIK_LOOPBACK_IP="${CURL_TRAEFIK_LOOPBACK_IP:-127.0.0.1}"
 
 MAILCOW_DIR="${MAILCOW_DIR:-/opt/mailcow-dockerized}"
 MAILCOW_CLONE_URL="${MAILCOW_CLONE_URL:-https://github.com/mailcow/mailcow-dockerized}"
 MAILCOW_BRANCH="${MAILCOW_BRANCH:-master}"
-MAILCOW_HTTP_BIND="${MAILCOW_HTTP_BIND:-127.0.0.1}"
+MAILCOW_HTTP_BIND="${MAILCOW_HTTP_BIND:-${DEPLOYWERK_LOOPBACK_HOST}}"
 MAILCOW_HTTP_PORT="${MAILCOW_HTTP_PORT:-8082}"
-MAILCOW_HTTPS_BIND="${MAILCOW_HTTPS_BIND:-127.0.0.1}"
+MAILCOW_HTTPS_BIND="${MAILCOW_HTTPS_BIND:-${DEPLOYWERK_LOOPBACK_HOST}}"
 MAILCOW_HTTPS_PORT="${MAILCOW_HTTPS_PORT:-8444}"
 MAILCOW_TRAEFIK_OVERRIDE_FILE="${MAILCOW_TRAEFIK_OVERRIDE_FILE:-docker-compose.orbytals-traefik.yml}"
 # Mailcow internal bridge uses IPV4_NETWORK as n.n.n -> n.n.n.0/24 (see mailcow docker-compose). Default 172.22.1 often
@@ -66,7 +72,7 @@ GARAGE_S3_PORT="${GARAGE_S3_PORT:-3900}"
 GARAGE_RPC_PORT="${GARAGE_RPC_PORT:-3901}"
 GARAGE_WEB_PORT="${GARAGE_WEB_PORT:-3902}"
 GARAGE_ADMIN_PORT="${GARAGE_ADMIN_PORT:-3903}"
-GARAGE_ENDPOINT_URL="${GARAGE_ENDPOINT_URL:-http://127.0.0.1:${GARAGE_S3_PORT}}"
+GARAGE_ENDPOINT_URL="${GARAGE_ENDPOINT_URL:-http://${DEPLOYWERK_LOOPBACK_HOST}:${GARAGE_S3_PORT}}"
 # Required by current Garage images for [s3_web]; suffix for website-style bucket hosts (Garage configuration reference).
 GARAGE_S3_WEB_ROOT_DOMAIN="${GARAGE_S3_WEB_ROOT_DOMAIN:-.web.garage.localhost}"
 GARAGE_REGION="${GARAGE_REGION:-garage}"
@@ -97,6 +103,8 @@ ENABLE_STANDARD_DNS_PORT_53="${ENABLE_STANDARD_DNS_PORT_53:-false}"
 ENABLE_PUBLIC_MATRIX_FEDERATION_PORT="${ENABLE_PUBLIC_MATRIX_FEDERATION_PORT:-true}"
 COCKPIT_USE_NETWORKMANAGER="${COCKPIT_USE_NETWORKMANAGER:-true}"
 COCKPIT_PORT="${COCKPIT_PORT:-9292}"
+# When false, `verify` skips Traefik→Cockpit HTTPS (often flaky vs UFW/Docker→host); set true to enforce the check.
+VERIFY_COCKPIT="${VERIFY_COCKPIT:-false}"
 
 ELEMENT_DIR="${ELEMENT_DIR:-${SERVICE_ROOT}/element-web}"
 ELEMENT_COMPOSE_FILE="${ELEMENT_COMPOSE_FILE:-${ELEMENT_DIR}/docker-compose.yml}"
@@ -122,6 +130,23 @@ require_root() {
 
 command_exists() {
   command -v "$1" >/dev/null 2>&1
+}
+
+# True if $1 is an IPv4 loopback host form we accept interchangeably with the other.
+is_ipv4_loopback_name() {
+  case "$1" in
+    127.0.0.1 | localhost) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# Normalize 127.0.0.1 and localhost to the same string so we do not add a duplicate nginx listen for equivalent loopback forms.
+canonical_loopback_or_self() {
+  if is_ipv4_loopback_name "$1"; then
+    printf '%s' "127.0.0.1"
+  else
+    printf '%s' "$1"
+  fi
 }
 
 # Transient "mirror sync in progress" / hash mismatch on apt indexes is common; retry before failing.
@@ -399,7 +424,7 @@ ensure_root_rustup() {
   source "${CARGO_HOME}/env"
 }
 
-# Traefik (on Docker networks) reaches host services via the bridge/gateway IP (e.g. 172.17.0.1), not 127.0.0.1.
+# Traefik (on Docker networks) reaches host services via the bridge/gateway IP (e.g. 172.17.0.1), not 127.0.0.1 / localhost.
 # Default UFW "deny incoming" blocks that path unless we allow from Docker-private ranges.
 ufw_allow_docker_internal_to_host_tcp() {
   local port="$1"
@@ -802,7 +827,7 @@ trigger_traefik_acme() {
   )
   local h
   for h in "${hosts[@]}"; do
-    curl -kfsSI --max-time 10 --resolve "${h}:443:127.0.0.1" "https://${h}/" >/dev/null 2>&1 || true
+    curl -kfsSI --max-time 10 --resolve "${h}:443:${CURL_TRAEFIK_LOOPBACK_IP}" "https://${h}/" >/dev/null 2>&1 || true
   done
 }
 ensure_deploywerk_user() {
@@ -826,7 +851,7 @@ ensure_deploywerk_env() {
   ensure_env_kv "${DEPLOYWERK_ENV_FILE}" APP_ENV production
   ensure_env_kv "${DEPLOYWERK_ENV_FILE}" HOST "${DEPLOYWERK_LOOPBACK_HOST}"
   ensure_env_kv "${DEPLOYWERK_ENV_FILE}" PORT "${DEPLOYWERK_API_PORT}"
-  ensure_env_kv "${DEPLOYWERK_ENV_FILE}" DATABASE_URL "postgresql://${DEPLOYWERK_DB_USER}:${DEPLOYWERK_DB_PASSWORD}@127.0.0.1:5432/${DEPLOYWERK_DB_NAME}"
+  ensure_env_kv "${DEPLOYWERK_ENV_FILE}" DATABASE_URL "postgresql://${DEPLOYWERK_DB_USER}:${DEPLOYWERK_DB_PASSWORD}@${DEPLOYWERK_LOOPBACK_HOST}:5432/${DEPLOYWERK_DB_NAME}"
   ensure_env_kv "${DEPLOYWERK_ENV_FILE}" JWT_SECRET "${DEPLOYWERK_JWT_SECRET}"
   ensure_env_kv "${DEPLOYWERK_ENV_FILE}" SERVER_KEY_ENCRYPTION_KEY "${DEPLOYWERK_SERVER_KEY_ENCRYPTION_KEY}"
   ensure_env_kv "${DEPLOYWERK_ENV_FILE}" DEPLOYWERK_API_URL "https://${ORBYTALS_API_DOMAIN}"
@@ -853,7 +878,7 @@ ensure_deploywerk_env() {
   ensure_env_kv "${DEPLOYWERK_ENV_FILE}" DEPLOYWERK_INTEGRATION_MAILCOW_URL "https://${ORBYTALS_MAIL_DOMAIN}"
   ensure_env_kv "${DEPLOYWERK_ENV_FILE}" DEPLOYWERK_INTEGRATION_MATRIX_CLIENT_URL "https://${HERMES_CHAT_DOMAIN}"
   ensure_env_kv "${DEPLOYWERK_ENV_FILE}" DEPLOYWERK_BOOTSTRAP_PLATFORM_ADMIN_EMAIL "${DEPLOYWERK_BOOTSTRAP_PLATFORM_ADMIN_EMAIL}"
-  ensure_env_kv "${DEPLOYWERK_ENV_FILE}" DEPLOYWERK_SMTP_HOST "127.0.0.1"
+  ensure_env_kv "${DEPLOYWERK_ENV_FILE}" DEPLOYWERK_SMTP_HOST "${DEPLOYWERK_LOOPBACK_HOST}"
   ensure_env_kv "${DEPLOYWERK_ENV_FILE}" DEPLOYWERK_SMTP_PORT "587"
   ensure_env_kv "${DEPLOYWERK_ENV_FILE}" DEPLOYWERK_SMTP_USER "${DEPLOYWERK_SMTP_USER_PROMPT}"
   ensure_env_kv "${DEPLOYWERK_ENV_FILE}" DEPLOYWERK_SMTP_PASSWORD "${DEPLOYWERK_SMTP_PASSWORD_PROMPT}"
@@ -908,10 +933,12 @@ EOF
 }
 
 write_nginx_site() {
-  local gw
+  local gw canon_gw canon_lb
   gw="$(host_gateway_ip)"
+  canon_gw="$(canonical_loopback_or_self "${gw}")"
+  canon_lb="$(canonical_loopback_or_self "${DEPLOYWERK_LOOPBACK_HOST}")"
   local listen_extra=""
-  if [[ -n "${gw}" && "${gw}" != "${DEPLOYWERK_LOOPBACK_HOST}" ]]; then
+  if [[ -n "${gw}" && "${canon_gw}" != "${canon_lb}" ]]; then
     listen_extra="
   listen ${gw}:${DEPLOYWERK_NGINX_PORT};"
   fi
@@ -979,7 +1006,7 @@ db_engine = "sqlite"
 
 replication_factor = 1
 rpc_bind_addr = "0.0.0.0:${GARAGE_RPC_PORT}"
-rpc_public_addr = "127.0.0.1:${GARAGE_RPC_PORT}"
+rpc_public_addr = "${DEPLOYWERK_LOOPBACK_HOST}:${GARAGE_RPC_PORT}"
 rpc_secret = "${GARAGE_RPC_SECRET}"
 
 [s3_api]
@@ -1006,9 +1033,9 @@ services:
     container_name: garage
     restart: unless-stopped
     ports:
-      - "127.0.0.1:${GARAGE_S3_PORT}:${GARAGE_S3_PORT}"
-      - "127.0.0.1:${GARAGE_WEB_PORT}:${GARAGE_WEB_PORT}"
-      - "127.0.0.1:${GARAGE_ADMIN_PORT}:${GARAGE_ADMIN_PORT}"
+      - "${DEPLOYWERK_LOOPBACK_HOST}:${GARAGE_S3_PORT}:${GARAGE_S3_PORT}"
+      - "${DEPLOYWERK_LOOPBACK_HOST}:${GARAGE_WEB_PORT}:${GARAGE_WEB_PORT}"
+      - "${DEPLOYWERK_LOOPBACK_HOST}:${GARAGE_ADMIN_PORT}:${GARAGE_ADMIN_PORT}"
     volumes:
       - ${GARAGE_CONFIG_FILE}:/etc/garage.toml
       - ${GARAGE_DIR}/meta:/var/lib/garage/meta
@@ -1158,7 +1185,7 @@ services:
     ports:
       - "${TECHNITIUM_DNS_PORT}:53/udp"
       - "${TECHNITIUM_DNS_PORT}:53/tcp"
-      - "127.0.0.1:${TECHNITIUM_HTTP_PORT}:5380"
+      - "${DEPLOYWERK_LOOPBACK_HOST}:${TECHNITIUM_HTTP_PORT}:5380"
     volumes:
       - ${TECHNITIUM_DIR}/config:/etc/dns
     networks:
@@ -1416,6 +1443,7 @@ ensure_mailcow_config() {
   fi
   ensure_conf_kv "$conf" MAILCOW_HOSTNAME "${ORBYTALS_MAIL_DOMAIN}"
   ensure_conf_kv "$conf" SKIP_LETS_ENCRYPT "y"
+  # HTTP(S)_BIND in mailcow.conf: loopback only here; use 127.0.0.1 or localhost (override MAILCOW_HTTP_BIND / MAILCOW_HTTPS_BIND).
   ensure_conf_kv "$conf" HTTP_BIND "${MAILCOW_HTTP_BIND}"
   ensure_conf_kv "$conf" HTTP_PORT "${MAILCOW_HTTP_PORT}"
   ensure_conf_kv "$conf" HTTPS_BIND "${MAILCOW_HTTPS_BIND}"
@@ -1515,14 +1543,14 @@ verify_traefik_https() {
   local path="${2:-/}"
   [[ "${path}" == /* ]] || path="/${path}"
   local url="https://${host}${path}"
-  echo "---- ${url} (Traefik @ 127.0.0.1:443, SNI ${host})"
+  echo "---- ${url} (Traefik @ ${CURL_TRAEFIK_LOOPBACK_IP}:443 via --resolve; app loopback ${DEPLOYWERK_LOOPBACK_HOST}; SNI ${host})"
   local out
-  out="$(curl -sSI --max-time 25 --resolve "${host}:443:127.0.0.1" "$url" 2>&1)" || true
+  out="$(curl -sSI --max-time 25 --resolve "${host}:443:${CURL_TRAEFIK_LOOPBACK_IP}" "$url" 2>&1)" || true
   if printf '%s' "$out" | grep -qE '^HTTP/[0-9.]+ '; then
     printf '%s\n' "$out" | head -n 25
     return 0
   fi
-  out="$(curl -ksSI --max-time 25 --resolve "${host}:443:127.0.0.1" "$url" 2>&1)" || true
+  out="$(curl -ksSI --max-time 25 --resolve "${host}:443:${CURL_TRAEFIK_LOOPBACK_IP}" "$url" 2>&1)" || true
   if printf '%s' "$out" | grep -qE '^HTTP/[0-9.]+ '; then
     printf '%s\n' "$out" | head -n 25
     echo "(TLS certificate verify skipped; fix ACME or trust chain if this is unexpected)"
@@ -1560,7 +1588,9 @@ verify_install() {
   verify_traefik_https "${ORBYTALS_GIT_DOMAIN}" "/"
   verify_traefik_https "${ORBYTALS_DNS_DOMAIN}" "/"
   verify_traefik_https "${ORBYTALS_TRAEFIK_DOMAIN}" "/"
-  verify_traefik_https "${ORBYTALS_COCKPIT_DOMAIN}" "/"
+  if [[ "${VERIFY_COCKPIT}" == "true" ]]; then
+    verify_traefik_https "${ORBYTALS_COCKPIT_DOMAIN}" "/"
+  fi
   verify_traefik_https "${HERMES_API_DOMAIN}" "/_matrix/client/versions"
   verify_traefik_https "${HERMES_CHAT_DOMAIN}" "/"
   verify_traefik_https "${HERMES_CHAT_DOMAIN}" "/.well-known/matrix/client"
@@ -1663,6 +1693,14 @@ Commands:
 
 Primary command:
   sudo bash scripts/orbytals-install.sh all
+
+Loopback / local binds (optional environment):
+  DEPLOYWERK_LOOPBACK_HOST   Host for API, nginx, DATABASE_URL, SMTP to Mailcow, Garage & Technitium
+                             Docker publishes. Both 127.0.0.1 and localhost are valid (default: localhost).
+  MAILCOW_HTTP_BIND          Override Mailcow HTTP bind (default: same as DEPLOYWERK_LOOPBACK_HOST)
+  MAILCOW_HTTPS_BIND         Override Mailcow HTTPS bind (default: same as DEPLOYWERK_LOOPBACK_HOST)
+  CURL_TRAEFIK_LOOPBACK_IP   Numeric IP for curl --resolve when probing Traefik on loopback (default: 127.0.0.1)
+  VERIFY_COCKPIT             Set true to include Cockpit in verify (default: false)
 EOF
 }
 

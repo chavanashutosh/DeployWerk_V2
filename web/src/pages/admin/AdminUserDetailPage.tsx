@@ -8,7 +8,7 @@ import { AdminViewLink, formatAdminListError } from "./adminUi";
 function cliSuggestedApiBase(): string {
   const o = apiOrigin().trim();
   if (o) return o;
-  return typeof window !== "undefined" ? window.location.origin : "http://127.0.0.1:8080";
+  return typeof window !== "undefined" ? window.location.origin : "http://localhost:8080";
 }
 
 type Detail = {
