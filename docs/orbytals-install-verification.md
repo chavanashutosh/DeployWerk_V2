@@ -114,9 +114,15 @@ Re-run **`install_native_deploywerk`** (full `all` is fine) or at least re-apply
 
 ## Mailcow: `Pool overlaps with other one on this address space`
 
-Mailcow's default internal **`172.22.1.0/24`** often clashes with **another Docker network** already on the host (Traefik, Matrix, Forgejo, etc.), so Docker refuses to create **`mailcowdockerized_mailcow-network`**.
+Mailcow's default internal **`172.22.1.0/24`** often clashes with **another Docker network** already on the host (Traefik, Matrix, Forgejo, etc.), so Docker refuses to create **`mailcowdockerized_mailcow-network`**. Overlaps are often **IPv6** pools even when the message does not say so.
 
-The installer sets **`IPV4_NETWORK`** in `mailcow.conf` to a **free `/24`** when possible (uses `python3` + `docker network inspect`; falls back to **`172.29.241`**). Override with env **`MAILCOW_IPV4_NETWORK`** (prefix only, e.g. `172.30.200` → `172.30.200.0/24`). **`IPV6_NETWORK`** is set to a non-default ULA to reduce IPv6 pool collisions; override with **`MAILCOW_IPV6_NETWORK`** if needed.
+The installer:
+
+- Writes **`IPV4_NETWORK`** in **`mailcow.conf`** to a **free `/24`**, scanning many **`10.x`** and **`172.x`** candidates via **`python3`** and a single **`docker network inspect`** on all networks (fallback **`10.254.99`** if nothing fits).
+- Sets **`ENABLE_IPV6=false`** by default (**`MAILCOW_ENABLE_IPV6`** env to override) so **`mailcow-network`** does not request a conflicting IPv6 subnet.
+- Removes **`${COMPOSE_PROJECT_NAME}_mailcow-network`** (default **`mailcowdockerized_mailcow-network`**) before **`compose up`** so a failed partial run does not block recreation.
+
+Override IPv4 with **`MAILCOW_IPV4_NETWORK`** (prefix only, e.g. `10.200.50` → `10.200.50.0/24`). **`MAILCOW_IPV6_NETWORK`** still applies when IPv6 is enabled.
 
 After changing subnets, tear down Mailcow and remove the broken project network (paths may differ on your host):
 

@@ -64,6 +64,9 @@ MAILCOW_TRAEFIK_OVERRIDE_FILE="${MAILCOW_TRAEFIK_OVERRIDE_FILE:-docker-compose.o
 MAILCOW_IPV4_NETWORK="${MAILCOW_IPV4_NETWORK:-}"
 # Distinct ULA avoids rare IPv6 pool overlaps with other stacks using mailcow's default fd4d:6169:6c63:6f77::/64.
 MAILCOW_IPV6_NETWORK="${MAILCOW_IPV6_NETWORK:-fd9e:c0a8:beef:fc00::/64}"
+# Mailcow compose enables IPv6 on mailcow-network by default; Docker often errors with "Pool overlaps" on IPv6 or
+# crowded 172.22.1.0/24. Default false for Orbytals; set MAILCOW_ENABLE_IPV6=true if you need IPv6 in mailcow.
+MAILCOW_ENABLE_IPV6="${MAILCOW_ENABLE_IPV6:-false}"
 
 GARAGE_DIR="${GARAGE_DIR:-${SERVICE_ROOT}/garage}"
 GARAGE_COMPOSE_FILE="${GARAGE_COMPOSE_FILE:-${GARAGE_DIR}/docker-compose.yml}"
@@ -229,27 +232,39 @@ pick_mailcow_ipv4_network() {
     local picked
     picked="$(python3 -c "
 import ipaddress, subprocess, json
-candidates = [f'172.29.{o}' for o in range(230, 256)] + [f'172.30.{o}' for o in range(200, 256)] + [f'172.31.{o}' for o in range(200, 256)]
+# Prefer 10/8 and high 172.16/12 /24s — Docker's default pools often consume 172.17.x–172.22.x first.
+candidates = []
+for b in range(200, 255):
+    for c in (1, 17, 33, 49, 65, 81, 97, 113, 129, 145, 161, 177, 193, 209, 225, 241):
+        candidates.append(f'10.{b}.{c}')
+for b in range(24, 32):
+    for c in range(1, 255, 5):
+        candidates.append(f'172.{b}.{c}')
+for o in range(230, 256):
+    candidates.append(f'172.29.{o}')
+for o in range(200, 256):
+    candidates.append(f'172.30.{o}')
+for o in range(200, 256):
+    candidates.append(f'172.31.{o}')
 try:
-    ids = subprocess.check_output(['docker', 'network', 'ls', '-q'], text=True).split()
+    ids = [x for x in subprocess.check_output(['docker', 'network', 'ls', '-q'], text=True).split() if x]
 except (subprocess.CalledProcessError, FileNotFoundError):
     ids = []
 existing = []
-for net_id in ids:
-    if not net_id.strip():
-        continue
+if ids:
     try:
-        out = subprocess.check_output(['docker', 'network', 'inspect', net_id], text=True)
-    except subprocess.CalledProcessError:
-        continue
-    for cfg in json.loads(out)[0].get('IPAM', {}).get('Config') or []:
-        s = cfg.get('Subnet')
-        if not s:
-            continue
-        try:
-            existing.append(ipaddress.ip_network(s, strict=False))
-        except ValueError:
-            pass
+        raw = subprocess.check_output(['docker', 'network', 'inspect'] + ids, text=True)
+        for net in json.loads(raw):
+            for cfg in net.get('IPAM', {}).get('Config') or []:
+                s = cfg.get('Subnet')
+                if not s:
+                    continue
+                try:
+                    existing.append(ipaddress.ip_network(s, strict=False))
+                except ValueError:
+                    pass
+    except (subprocess.CalledProcessError, json.JSONDecodeError, KeyError):
+        pass
 for base in candidates:
     cand = ipaddress.ip_network(base + '.0/24')
     if not any(cand.overlaps(e) for e in existing):
@@ -263,7 +278,8 @@ else:
       return
     fi
   fi
-  printf '%s' "172.29.241"
+  warn "Could not auto-pick Mailcow IPV4_NETWORK (python3/docker inspect unavailable or every candidate overlapped); using 10.254.99 — set MAILCOW_IPV4_NETWORK if compose still fails."
+  printf '%s' "10.254.99"
 }
 
 generate_jwt_secret() {
@@ -1454,9 +1470,9 @@ ensure_mailcow_config() {
   mailcow_ipv4="$(pick_mailcow_ipv4_network)"
   ensure_conf_kv "$conf" IPV4_NETWORK "${mailcow_ipv4}"
   ensure_conf_kv "$conf" IPV6_NETWORK "${MAILCOW_IPV6_NETWORK}"
-  if [[ -z "${MAILCOW_IPV4_NETWORK:-}" ]]; then
-    log "Mailcow internal subnet ${mailcow_ipv4}.0/24 (set MAILCOW_IPV4_NETWORK=n.n.n to pin a different /24 if needed)"
-  fi
+  # false avoids Docker IPv6 pool overlap on busy hosts; enable only if you need IPv6 inside mailcow-network.
+  ensure_conf_kv "$conf" ENABLE_IPV6 "${MAILCOW_ENABLE_IPV6}"
+  log "Mailcow internal IPv4 ${mailcow_ipv4}.0/24, ENABLE_IPV6=${MAILCOW_ENABLE_IPV6} (override MAILCOW_IPV4_NETWORK / MAILCOW_ENABLE_IPV6 if needed)"
 }
 
 write_mailcow_override() {
@@ -1506,6 +1522,11 @@ install_mailcow() {
   ensure_mailcow_clone
   ensure_mailcow_config
   write_mailcow_override
+  # Failed earlier compose runs can leave a broken project network; remove so compose can recreate with new IPAM.
+  local mailcow_proj
+  mailcow_proj="$(env_value "${MAILCOW_DIR}/mailcow.conf" COMPOSE_PROJECT_NAME)"
+  mailcow_proj="${mailcow_proj:-mailcowdockerized}"
+  docker network rm "${mailcow_proj}_mailcow-network" >/dev/null 2>&1 || true
   mailcow_compose pull || {
     mailcow_compose ps >&2 || true
     die "Mailcow pull failed"
@@ -1699,6 +1720,8 @@ Loopback / local binds (optional environment):
                              Docker publishes. Both 127.0.0.1 and localhost are valid (default: localhost).
   MAILCOW_HTTP_BIND          Override Mailcow HTTP bind (default: same as DEPLOYWERK_LOOPBACK_HOST)
   MAILCOW_HTTPS_BIND         Override Mailcow HTTPS bind (default: same as DEPLOYWERK_LOOPBACK_HOST)
+  MAILCOW_IPV4_NETWORK       Pin Mailcow internal n.n.n prefix for n.n.n.0/24 (default: auto free /24)
+  MAILCOW_ENABLE_IPV6        true/false for mailcow-network IPv6 (default: false; avoids Docker IPv6 pool overlap)
   CURL_TRAEFIK_LOOPBACK_IP   Numeric IP for curl --resolve when probing Traefik on loopback (default: 127.0.0.1)
   VERIFY_COCKPIT             Set true to include Cockpit in verify (default: false)
 EOF
