@@ -407,6 +407,8 @@ Prepend your public API origin. Secrets: see [.env.example](.env.example).
 
 [scripts/orbytals-install.sh](scripts/orbytals-install.sh) performs host bootstrap itself: packages, Docker, Cockpit, Node.js 22, Rust, nginx/PostgreSQL prerequisites, Traefik, Garage, and the managed application/service stacks.
 
+Interpret **`verify`** output (timeouts vs `404`, Traefik vs loopback): [docs/orbytals-install-verification.md](docs/orbytals-install-verification.md).
+
 Cockpit-specific behavior in the installer:
 
 - installs `cockpit-storaged`, `udisks2-lvm2`, and `udisks2-btrfs` for storage support, with `udisks2-iscsi` used when available in apt sources
@@ -425,6 +427,8 @@ That usually means a line in the state file was not a valid `KEY=value` assignme
 ### Post-install `verify` shows HTTPS failures from the server itself
 
 `curl https://app.example.com` from **the same machine** often fails when DNS points at the server’s public IP but the router does **not** support hairpin NAT (TCP never reaches Traefik). The installer’s smoke checks therefore use **`curl --resolve …:443:127.0.0.1`** so Traefik is exercised on loopback with the correct hostname. Client machines still need correct **public DNS** (A/AAAA) to reach the site from the Internet.
+
+Timeouts to **app** / **api** / **cockpit** while loopback `8085` / `8080` succeed usually mean Traefik (Docker) could not reach **host** nginx or Cockpit (listen address + UFW); see [docs/orbytals-install-verification.md](docs/orbytals-install-verification.md).
 
 ### Garage bootstrap fails with Docker `409` / `unable to upgrade to tcp, received 409`
 

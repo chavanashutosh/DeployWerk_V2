@@ -340,6 +340,13 @@ ensure_root_rustup() {
   source "${CARGO_HOME}/env"
 }
 
+# Traefik (on Docker networks) reaches host services via the bridge/gateway IP (e.g. 172.17.0.1), not 127.0.0.1.
+# Default UFW "deny incoming" blocks that path unless we allow from Docker-private ranges.
+ufw_allow_docker_internal_to_host_tcp() {
+  local port="$1"
+  ufw allow from 172.16.0.0/12 to any port "${port}" proto tcp || true
+}
+
 configure_firewall() {
   log "Configuring firewall"
   ufw default deny incoming || true
@@ -368,10 +375,13 @@ configure_firewall() {
     ufw allow 8448/tcp || true
   fi
 
+  ufw_allow_docker_internal_to_host_tcp "${DEPLOYWERK_NGINX_PORT}"
+
   if [[ "${OPEN_COCKPIT_PORT}" == "true" ]]; then
     ufw allow "${COCKPIT_PORT}/tcp" || true
   else
-    ufw deny "${COCKPIT_PORT}/tcp" >/dev/null 2>&1 || true
+    # Do not "ufw deny" Cockpit: that blocks Traefik (Docker) → host Cockpit. WAN is still blocked by default deny.
+    ufw_allow_docker_internal_to_host_tcp "${COCKPIT_PORT}"
   fi
 
   ufw --force enable || true
@@ -817,9 +827,16 @@ EOF
 }
 
 write_nginx_site() {
+  local gw
+  gw="$(host_gateway_ip)"
+  local listen_extra=""
+  if [[ -n "${gw}" && "${gw}" != "${DEPLOYWERK_LOOPBACK_HOST}" ]]; then
+    listen_extra="
+  listen ${gw}:${DEPLOYWERK_NGINX_PORT};"
+  fi
   cat >"${DEPLOYWERK_NGINX_SITE}" <<EOF
 server {
-  listen ${DEPLOYWERK_LOOPBACK_HOST}:${DEPLOYWERK_NGINX_PORT};
+  listen ${DEPLOYWERK_LOOPBACK_HOST}:${DEPLOYWERK_NGINX_PORT};${listen_extra}
   server_name ${ORBYTALS_APP_DOMAIN} ${ORBYTALS_API_DOMAIN} ${ORBYTALS_APEX_DOMAIN};
   root ${DEPLOYWERK_WEB_ROOT};
   index index.html;
