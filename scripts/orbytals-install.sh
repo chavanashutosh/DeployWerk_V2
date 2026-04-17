@@ -52,6 +52,12 @@ MAILCOW_HTTP_PORT="${MAILCOW_HTTP_PORT:-8082}"
 MAILCOW_HTTPS_BIND="${MAILCOW_HTTPS_BIND:-127.0.0.1}"
 MAILCOW_HTTPS_PORT="${MAILCOW_HTTPS_PORT:-8444}"
 MAILCOW_TRAEFIK_OVERRIDE_FILE="${MAILCOW_TRAEFIK_OVERRIDE_FILE:-docker-compose.orbytals-traefik.yml}"
+# Mailcow internal bridge uses IPV4_NETWORK as n.n.n -> n.n.n.0/24 (see mailcow docker-compose). Default 172.22.1 often
+# collides with other Docker networks on the same host ("Pool overlaps with other one on this address space").
+# Leave unset to auto-pick a free /24; set explicitly if you need a fixed prefix.
+MAILCOW_IPV4_NETWORK="${MAILCOW_IPV4_NETWORK:-}"
+# Distinct ULA avoids rare IPv6 pool overlaps with other stacks using mailcow's default fd4d:6169:6c63:6f77::/64.
+MAILCOW_IPV6_NETWORK="${MAILCOW_IPV6_NETWORK:-fd9e:c0a8:beef:fc00::/64}"
 
 GARAGE_DIR="${GARAGE_DIR:-${SERVICE_ROOT}/garage}"
 GARAGE_COMPOSE_FILE="${GARAGE_COMPOSE_FILE:-${GARAGE_DIR}/docker-compose.yml}"
@@ -186,6 +192,53 @@ ensure_conf_kv() {
   grep -v "^${key}=" "$file" >"$tmp" 2>/dev/null || true
   printf '%s=%s\n' "$key" "$val" >>"$tmp"
   mv "$tmp" "$file"
+}
+
+# Prefix n.n.n for Mailcow's n.n.n.0/24 internal network; must not overlap any existing Docker subnet on this host.
+pick_mailcow_ipv4_network() {
+  if [[ -n "${MAILCOW_IPV4_NETWORK:-}" ]]; then
+    printf '%s' "${MAILCOW_IPV4_NETWORK}"
+    return
+  fi
+  if command_exists python3; then
+    local picked
+    picked="$(python3 -c "
+import ipaddress, subprocess, json
+candidates = [f'172.29.{o}' for o in range(230, 256)] + [f'172.30.{o}' for o in range(200, 256)] + [f'172.31.{o}' for o in range(200, 256)]
+try:
+    ids = subprocess.check_output(['docker', 'network', 'ls', '-q'], text=True).split()
+except (subprocess.CalledProcessError, FileNotFoundError):
+    ids = []
+existing = []
+for net_id in ids:
+    if not net_id.strip():
+        continue
+    try:
+        out = subprocess.check_output(['docker', 'network', 'inspect', net_id], text=True)
+    except subprocess.CalledProcessError:
+        continue
+    for cfg in json.loads(out)[0].get('IPAM', {}).get('Config') or []:
+        s = cfg.get('Subnet')
+        if not s:
+            continue
+        try:
+            existing.append(ipaddress.ip_network(s, strict=False))
+        except ValueError:
+            pass
+for base in candidates:
+    cand = ipaddress.ip_network(base + '.0/24')
+    if not any(cand.overlaps(e) for e in existing):
+        print(base)
+        break
+else:
+    print('')
+" 2>/dev/null || true)"
+    if [[ -n "$picked" ]]; then
+      printf '%s' "$picked"
+      return
+    fi
+  fi
+  printf '%s' "172.29.241"
 }
 
 generate_jwt_secret() {
@@ -1369,6 +1422,13 @@ ensure_mailcow_config() {
   ensure_conf_kv "$conf" HTTPS_PORT "${MAILCOW_HTTPS_PORT}"
   ensure_conf_kv "$conf" DOCKER_COMPOSE_VERSION "native"
   ensure_conf_kv "$conf" TZ "${MAILCOW_TIMEZONE}"
+  local mailcow_ipv4
+  mailcow_ipv4="$(pick_mailcow_ipv4_network)"
+  ensure_conf_kv "$conf" IPV4_NETWORK "${mailcow_ipv4}"
+  ensure_conf_kv "$conf" IPV6_NETWORK "${MAILCOW_IPV6_NETWORK}"
+  if [[ -z "${MAILCOW_IPV4_NETWORK:-}" ]]; then
+    log "Mailcow internal subnet ${mailcow_ipv4}.0/24 (set MAILCOW_IPV4_NETWORK=n.n.n to pin a different /24 if needed)"
+  fi
 }
 
 write_mailcow_override() {

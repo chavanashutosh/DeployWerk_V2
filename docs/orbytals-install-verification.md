@@ -110,6 +110,23 @@ The installer was updated to:
 
 Re-run **`install_native_deploywerk`** (full `all` is fine) or at least re-apply nginx + UFW from the updated script, then run **`sudo bash scripts/orbytals-install.sh verify`**.
 
+## Mailcow: `Pool overlaps with other one on this address space`
+
+Mailcow's default internal **`172.22.1.0/24`** often clashes with **another Docker network** already on the host (Traefik, Matrix, Forgejo, etc.), so Docker refuses to create **`mailcowdockerized_mailcow-network`**.
+
+The installer sets **`IPV4_NETWORK`** in `mailcow.conf` to a **free `/24`** when possible (uses `python3` + `docker network inspect`; falls back to **`172.29.241`**). Override with env **`MAILCOW_IPV4_NETWORK`** (prefix only, e.g. `172.30.200` → `172.30.200.0/24`). **`IPV6_NETWORK`** is set to a non-default ULA to reduce IPv6 pool collisions; override with **`MAILCOW_IPV6_NETWORK`** if needed.
+
+After changing subnets, tear down Mailcow and remove the broken project network (paths may differ on your host):
+
+```bash
+cd /opt/mailcow-dockerized
+sudo docker compose -f docker-compose.yml -f docker-compose.orbytals-traefik.yml down --remove-orphans
+# Add -f docker-compose.override.yml if that file exists.
+sudo docker network rm mailcowdockerized_mailcow-network 2>/dev/null || true
+```
+
+Pull the updated installer (so **`mailcow.conf`** gets a new **`IPV4_NETWORK`**), then from your repo run **`sudo bash scripts/orbytals-install.sh all`**, or from **`/opt/mailcow-dockerized`** run **`docker compose`** with the same **`-f`** list as **`install_mailcow`** uses, then **`up -d`**.
+
 ## `404` from Traefik for mail / git / dns / Matrix
 
 An HTTP/2 `404` with a small body usually means **Traefik handled the request** but no router matched, or the backend returned `404` for that path. Typical follow-ups:

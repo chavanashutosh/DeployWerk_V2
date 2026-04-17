@@ -259,6 +259,8 @@ The script prompts interactively for operator credentials and stores its managed
 
 **TLS / Let's Encrypt:** The installer does **not** run `certbot`. **Traefik** terminates HTTPS on **443** and obtains certificates from **Let's Encrypt** via the **ACME HTTP-01** challenge on **80** (see `certificatesResolvers.le` in the bundled Traefik static config). Certificates are stored in `/opt/traefik/acme/acme.json`. During install you supply **`ACME_EMAIL`** for Let's Encrypt registration. Plain HTTP on **80** redirects to HTTPS except `/.well-known/acme-challenge`, which ACME needs. **Mailcow** is set to **`SKIP_LETS_ENCRYPT=y`** so it does not request its own certs; Traefik still serves **`https://mail.<domain>`** with LE. Until DNS points at this host and ACME finishes, browsers may warn about the certificate; the script's verify step may use `curl -k` while polling.
 
+**Mailcow Docker network:** If **`docker compose up`** fails with **pool overlaps** on **`mailcow-network`**, the installer picks a free **`IPV4_NETWORK`** (Mailcow internal **`/24`**) when **`python3`** is available; set **`MAILCOW_IPV4_NETWORK`** (e.g. `172.30.210`) or **`MAILCOW_IPV6_NETWORK`** to override. See [docs/orbytals-install-verification.md](docs/orbytals-install-verification.md).
+
 Useful follow-up commands:
 
 ```bash
