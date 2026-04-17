@@ -420,7 +420,7 @@ Cockpit-specific behavior in the installer:
 
 ### `/etc/orbytals/install.env: line N: …: command not found`
 
-That usually means a line in the state file was not a valid `KEY=value` assignment (often a **secret split across lines**, e.g. part of a Garage key on its own row). Current installers **strip invalid lines** and rewrite `/etc/orbytals/install.env` before sourcing it, so rerunning `scripts/orbytals-install.sh` should clear the error. If a secret was truncated, remove the affected key from the file or run `sudo rm -f /etc/orbytals/install.env` and run the installer again so prompts regenerate state.
+That usually means a line in the state file was not a valid `KEY=value` assignment (often a **secret split across lines**, e.g. part of a Garage key on its own row), or there are **spaces after `=`** (bash then treats the next token as a command, e.g. `GARAGE_ACCESS_KEY_ID=             GK7c…`). Current installers **sanitize** `/etc/orbytals/install.env` before sourcing it (drop invalid lines, trim values, re-quote assignments), so rerunning `scripts/orbytals-install.sh` should clear the error. If a secret was truncated, remove the affected key from the file or run `sudo rm -f /etc/orbytals/install.env` and run the installer again so prompts regenerate state.
 
 ### Post-install `verify` shows HTTPS failures from the server itself
 

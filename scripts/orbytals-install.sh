@@ -116,11 +116,20 @@ ensure_dir() {
   mkdir -p "$@"
 }
 
+# Strip leading/trailing ASCII whitespace (state values must not have spaces after "=" when sourced).
+trim_outer_ws() {
+  local s="$1"
+  s="${s#"${s%%[![:space:]]*}"}"
+  s="${s%"${s##*[![:space:]]}"}"
+  printf '%s' "$s"
+}
+
 ensure_env_kv() {
   local file="$1" key="$2" val="$3"
   # Never write raw newlines: a sourced install.env would execute continuation lines as commands.
   val="${val//$'\r'/}"
   val="${val//$'\n'/}"
+  val="$(trim_outer_ws "${val}")"
   ensure_dir "$(dirname "$file")"
   touch "$file"
   local tmp
@@ -163,8 +172,8 @@ generate_alpha_secret() {
   openssl rand -hex 24 | tr -d '\n'
 }
 
-# install.env is sourced as bash; orphan lines (e.g. a split secret on its own line) run as commands.
-# Keep only blank lines, comments, and KEY=value (optional leading "export ") before sourcing.
+# install.env is sourced as bash; orphan lines run as commands. "KEY= value" runs `value` as a command.
+# Keep only blank lines, comments, and KEY=value (optional leading "export "); normalize unquoted values.
 sanitize_state_file_for_source() {
   [[ -f "${STATE_FILE}" ]] || return 0
   local tmp bad=0
@@ -184,16 +193,28 @@ sanitize_state_file_for_source() {
       raw="${BASH_REMATCH[1]}"
       raw="${raw#"${raw%%[![:space:]]*}"}"
     fi
-    if [[ "${raw}" =~ ^[A-Za-z_][A-Za-z0-9_]*= ]]; then
-      printf '%s\n' "${line}" >>"${tmp}"
+    if [[ "${raw}" =~ ^([A-Za-z_][A-Za-z0-9_]*)=(.*)$ ]]; then
+      local k="${BASH_REMATCH[1]}" v="${BASH_REMATCH[2]}"
+      # Already shell-quoted on the RHS — keep line as-is (do not split/combine with trim+%q).
+      if [[ "${v}" == \$\'* || "${v}" == \"* || "${v}" == \'* ]]; then
+        printf '%s\n' "${line}" >>"${tmp}"
+      else
+        printf '%s=%q\n' "${k}" "$(trim_outer_ws "${v}")" >>"${tmp}"
+      fi
     else
       bad=$((bad + 1))
     fi
   done <"${STATE_FILE}"
+  if cmp -s "${tmp}" "${STATE_FILE}" 2>/dev/null; then
+    rm -f "${tmp}"
+    return 0
+  fi
   if [[ "${bad}" -gt 0 ]]; then
     warn "Removed ${bad} invalid line(s) from ${STATE_FILE} (orphan text or lines without KEY=value). Often caused by a pasted secret splitting across lines; fix values or delete the file and re-run prompts."
-    install -m 600 "${tmp}" "${STATE_FILE}"
+  else
+    warn "Rewrote ${STATE_FILE} for safe sourcing (e.g. spaces after \"=\" make bash run the next word as a command; values are trimmed and re-quoted where needed)."
   fi
+  install -m 600 "${tmp}" "${STATE_FILE}"
   rm -f "${tmp}"
 }
 
