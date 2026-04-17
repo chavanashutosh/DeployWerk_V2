@@ -418,6 +418,10 @@ Cockpit-specific behavior in the installer:
 
 ## Troubleshooting (installer)
 
+### Post-install `verify` shows HTTPS failures from the server itself
+
+`curl https://app.example.com` from **the same machine** often fails when DNS points at the server’s public IP but the router does **not** support hairpin NAT (TCP never reaches Traefik). The installer’s smoke checks therefore use **`curl --resolve …:443:127.0.0.1`** so Traefik is exercised on loopback with the correct hostname. Client machines still need correct **public DNS** (A/AAAA) to reach the site from the Internet.
+
 ### Garage bootstrap fails with Docker `409` / `unable to upgrade to tcp, received 409`
 
 This usually means the `garage` container is **not running** or is **restarting** when the installer tries to `docker exec` into it.

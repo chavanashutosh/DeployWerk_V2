@@ -1244,20 +1244,62 @@ verify_url() {
   echo "(failed)"
 }
 
+# Hit Traefik on loopback with correct SNI so checks work without hairpin-NAT and before public DNS is ready.
+verify_traefik_https() {
+  local host="$1"
+  local path="${2:-/}"
+  [[ "${path}" == /* ]] || path="/${path}"
+  local url="https://${host}${path}"
+  echo "---- ${url} (Traefik @ 127.0.0.1:443, SNI ${host})"
+  local out
+  out="$(curl -sSI --max-time 25 --resolve "${host}:443:127.0.0.1" "$url" 2>&1)" || true
+  if printf '%s' "$out" | grep -qE '^HTTP/[0-9.]+ '; then
+    printf '%s\n' "$out" | head -n 25
+    return 0
+  fi
+  out="$(curl -ksSI --max-time 25 --resolve "${host}:443:127.0.0.1" "$url" 2>&1)" || true
+  if printf '%s' "$out" | grep -qE '^HTTP/[0-9.]+ '; then
+    printf '%s\n' "$out" | head -n 25
+    echo "(TLS certificate verify skipped; fix ACME or trust chain if this is unexpected)"
+    return 0
+  fi
+  echo "(failed — Traefik not on 443, no router for Host, or connection error)"
+  printf '%s\n' "$out" | tail -n 10
+}
+
+# Garage S3 API often returns 4xx on HEAD /; curl -f would false-fail. Accept any HTTP response or open TCP port.
+verify_garage_s3_endpoint() {
+  local base="${GARAGE_ENDPOINT_URL}"
+  echo "---- ${base} (Garage S3 API)"
+  local out
+  out="$(curl -sSI --max-time 15 "${base}/" 2>&1)" || true
+  if printf '%s' "$out" | grep -qE '^HTTP/[0-9.]+ '; then
+    printf '%s\n' "$out" | head -n 18
+    return 0
+  fi
+  if bash -c "exec 3<>/dev/tcp/${DEPLOYWERK_LOOPBACK_HOST}/${GARAGE_S3_PORT}" 2>/dev/null; then
+    exec 3<&- 3>&- 2>/dev/null || true
+    echo "TCP ${DEPLOYWERK_LOOPBACK_HOST}:${GARAGE_S3_PORT} open (Garage listening)"
+    return 0
+  fi
+  echo "(failed)"
+  printf '%s\n' "$out" | tail -n 8
+}
+
 verify_install() {
   show_port_status
-  verify_url "https://${ORBYTALS_APP_DOMAIN}"
-  verify_url "https://${ORBYTALS_API_DOMAIN}/api/v1/bootstrap"
-  verify_url "https://${ORBYTALS_MAIL_DOMAIN}"
-  verify_url "https://${ORBYTALS_GIT_DOMAIN}"
-  verify_url "https://${ORBYTALS_DNS_DOMAIN}"
-  verify_url "https://${ORBYTALS_TRAEFIK_DOMAIN}"
-  verify_url "https://${ORBYTALS_COCKPIT_DOMAIN}"
-  verify_url "https://${HERMES_CHAT_DOMAIN}/_matrix/client/versions"
-  verify_url "https://${HERMES_CHAT_DOMAIN}/.well-known/matrix/server"
+  verify_traefik_https "${ORBYTALS_APP_DOMAIN}" "/"
+  verify_traefik_https "${ORBYTALS_API_DOMAIN}" "/api/v1/bootstrap"
+  verify_traefik_https "${ORBYTALS_MAIL_DOMAIN}" "/"
+  verify_traefik_https "${ORBYTALS_GIT_DOMAIN}" "/"
+  verify_traefik_https "${ORBYTALS_DNS_DOMAIN}" "/"
+  verify_traefik_https "${ORBYTALS_TRAEFIK_DOMAIN}" "/"
+  verify_traefik_https "${ORBYTALS_COCKPIT_DOMAIN}" "/"
+  verify_traefik_https "${HERMES_CHAT_DOMAIN}" "/_matrix/client/versions"
+  verify_traefik_https "${HERMES_CHAT_DOMAIN}" "/.well-known/matrix/server"
   verify_url "http://${DEPLOYWERK_LOOPBACK_HOST}:${DEPLOYWERK_NGINX_PORT}"
   verify_url "http://${DEPLOYWERK_LOOPBACK_HOST}:${DEPLOYWERK_API_PORT}/api/v1/health"
-  verify_url "${GARAGE_ENDPOINT_URL}"
+  verify_garage_s3_endpoint
 }
 
 compose_down_if_present() {
