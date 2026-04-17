@@ -67,6 +67,9 @@ MAILCOW_IPV6_NETWORK="${MAILCOW_IPV6_NETWORK:-fd9e:c0a8:beef:fc00::/64}"
 # Mailcow compose enables IPv6 on mailcow-network by default; Docker often errors with "Pool overlaps" on IPv6 or
 # crowded 172.22.1.0/24. Default false for Orbytals; set MAILCOW_ENABLE_IPV6=true if you need IPv6 in mailcow.
 MAILCOW_ENABLE_IPV6="${MAILCOW_ENABLE_IPV6:-false}"
+# Unbound's Docker healthcheck pings 1.1.1.1/8.8.8.8/9.9.9.9; many hosts block ICMP from bridge networks, so the
+# container stays "unhealthy" and blocks clamd → rspamd → nginx. Default y maps to mailcow.conf SKIP_UNBOUND_HEALTHCHECK=y.
+MAILCOW_SKIP_UNBOUND_HEALTHCHECK="${MAILCOW_SKIP_UNBOUND_HEALTHCHECK:-y}"
 
 GARAGE_DIR="${GARAGE_DIR:-${SERVICE_ROOT}/garage}"
 GARAGE_COMPOSE_FILE="${GARAGE_COMPOSE_FILE:-${GARAGE_DIR}/docker-compose.yml}"
@@ -1503,7 +1506,8 @@ ensure_mailcow_config() {
   ensure_conf_kv "$conf" IPV6_NETWORK "${MAILCOW_IPV6_NETWORK}"
   # false avoids Docker IPv6 pool overlap on busy hosts; enable only if you need IPv6 inside mailcow-network.
   ensure_conf_kv "$conf" ENABLE_IPV6 "${MAILCOW_ENABLE_IPV6}"
-  log "Mailcow internal IPv4 ${mailcow_ipv4}.0/24, ENABLE_IPV6=${MAILCOW_ENABLE_IPV6} (override MAILCOW_IPV4_NETWORK / MAILCOW_ENABLE_IPV6 if needed)"
+  ensure_conf_kv "$conf" SKIP_UNBOUND_HEALTHCHECK "${MAILCOW_SKIP_UNBOUND_HEALTHCHECK}"
+  log "Mailcow internal IPv4 ${mailcow_ipv4}.0/24, ENABLE_IPV6=${MAILCOW_ENABLE_IPV6}, SKIP_UNBOUND_HEALTHCHECK=${MAILCOW_SKIP_UNBOUND_HEALTHCHECK} (override MAILCOW_IPV4_NETWORK / MAILCOW_ENABLE_IPV6 / MAILCOW_SKIP_UNBOUND_HEALTHCHECK if needed)"
 }
 
 write_mailcow_override() {
@@ -1564,7 +1568,10 @@ install_mailcow() {
   }
   mailcow_compose up -d || {
     mailcow_compose ps >&2 || true
-    docker logs nginx-mailcow --tail 200 >&2 || true
+    mailcow_compose logs unbound-mailcow --tail 160 >&2 || true
+    mailcow_compose logs clamd-mailcow --tail 120 >&2 || true
+    mailcow_compose logs rspamd-mailcow --tail 120 >&2 || true
+    mailcow_compose logs nginx-mailcow --tail 200 >&2 || true
     die "Mailcow failed to start"
   }
 }
@@ -1753,6 +1760,7 @@ Loopback / local binds (optional environment):
   MAILCOW_HTTPS_BIND         Override Mailcow HTTPS bind (default: same as DEPLOYWERK_LOOPBACK_HOST)
   MAILCOW_IPV4_NETWORK       Pin Mailcow internal n.n.n prefix for n.n.n.0/24 (default: auto free /24)
   MAILCOW_ENABLE_IPV6        true/false for mailcow-network IPv6 (default: false; avoids Docker IPv6 pool overlap)
+  MAILCOW_SKIP_UNBOUND_HEALTHCHECK  y/n for mailcow.conf SKIP_UNBOUND_HEALTHCHECK (default: y; avoids ICMP-blocked VPS)
   CURL_TRAEFIK_LOOPBACK_IP   Numeric IP for curl --resolve when probing Traefik on loopback (default: 127.0.0.1)
   TRAEFIK_PUBLIC_NETWORK    Shared Docker network for Traefik + labeled stacks (default: proxy). Recreated by install if missing.
   VERIFY_COCKPIT             Set true to include Cockpit in verify (default: false)
