@@ -77,7 +77,7 @@ pub struct AppState {
     /// Public web origin for invite links in email, e.g. `https://app.example.com`.
     pub public_app_url: Option<String>,
     pub admin_action_emails_enabled: bool,
-    /// True when localhost preset URLs were merged (env flag or development default when unset).
+    /// True when loopback (127.0.0.1) preset URLs were merged (env flag or development default when unset).
     pub local_service_defaults: bool,
     /// Operator integration links (bootstrap); no secrets.
     pub integration_urls: IntegrationUrls,

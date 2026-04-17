@@ -1,7 +1,7 @@
 //! Lightweight host agent: periodic heartbeat to the DeployWerk API.
 //!
 //! Environment:
-//! - `DEPLOYWERK_API_URL` — base URL, e.g. `http://localhost:8080` (match API `HOST`/`PORT`)
+//! - `DEPLOYWERK_API_URL` — base URL, e.g. `http://127.0.0.1:8080` (match API `HOST`/`PORT`)
 //! - `DEPLOYWERK_AGENT_TOKEN` — bearer token from team **Agent** registration
 
 use std::env;
@@ -16,7 +16,7 @@ async fn main() -> anyhow::Result<()> {
         )
         .init();
 
-    let base = env::var("DEPLOYWERK_API_URL").unwrap_or_else(|_| "http://localhost:8080".into());
+    let base = env::var("DEPLOYWERK_API_URL").unwrap_or_else(|_| "http://127.0.0.1:8080".into());
     let token = env::var("DEPLOYWERK_AGENT_TOKEN").map_err(|_| {
         anyhow::anyhow!("DEPLOYWERK_AGENT_TOKEN is required (register an agent in the DeployWerk UI)")
     })?;

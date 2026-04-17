@@ -37,18 +37,17 @@ DEPLOYWERK_API_SERVICE_FILE="${DEPLOYWERK_API_SERVICE_FILE:-/etc/systemd/system/
 DEPLOYWERK_WORKER_SERVICE_FILE="${DEPLOYWERK_WORKER_SERVICE_FILE:-/etc/systemd/system/deploywerk-deploy-worker.service}"
 DEPLOYWERK_NGINX_SITE="${DEPLOYWERK_NGINX_SITE:-/etc/nginx/sites-available/deploywerk.conf}"
 DEPLOYWERK_NGINX_ENABLED_SITE="${DEPLOYWERK_NGINX_ENABLED_SITE:-/etc/nginx/sites-enabled/deploywerk.conf}"
-# Loopback for API/nginx proxy targets, DATABASE_URL host, Mailcow SMTP, Garage & Technitium host port binds, etc.
-# Both "127.0.0.1" and "localhost" are acceptable for nginx, Postgres URLs, Mailcow SMTP, etc. Docker "ports:"
-# host binds require a numeric IP — the script maps localhost/127.0.0.1 to 127.0.0.1 for those (see docker_host_bind_loopback_ip).
-#   export DEPLOYWERK_LOOPBACK_HOST=127.0.0.1
-# Mailcow UI binds default to the same value unless MAILCOW_HTTP_BIND / MAILCOW_HTTPS_BIND are set.
-DEPLOYWERK_LOOPBACK_HOST="${DEPLOYWERK_LOOPBACK_HOST:-localhost}"
+# Loopback for API/nginx, DATABASE_URL host, Mailcow SMTP, Garage & Technitium binds. Primary: 127.0.0.1; localhost is equivalent.
+# Docker "ports:" host side must be numeric — docker_host_bind_loopback_ip maps either loopback name to 127.0.0.1 for compose.
+#   export DEPLOYWERK_LOOPBACK_HOST=localhost
+# Mailcow HTTP(S) binds default to DEPLOYWERK_LOOPBACK_HOST unless MAILCOW_HTTP_BIND / MAILCOW_HTTPS_BIND are set.
+DEPLOYWERK_LOOPBACK_HOST="${DEPLOYWERK_LOOPBACK_HOST:-127.0.0.1}"
 DEPLOYWERK_API_PORT="${DEPLOYWERK_API_PORT:-8080}"
 DEPLOYWERK_NGINX_PORT="${DEPLOYWERK_NGINX_PORT:-8085}"
 DEPLOYWERK_DB_NAME="${DEPLOYWERK_DB_NAME:-deploywerk}"
 DEPLOYWERK_DB_USER="${DEPLOYWERK_DB_USER:-deploywerk}"
 DEPLOYWERK_DB_PASSWORD="${DEPLOYWERK_DB_PASSWORD:-deploywerk}"
-# curl --resolve needs a numeric loopback IP on typical builds; keep 127.0.0.1 even when DEPLOYWERK_LOOPBACK_HOST=localhost.
+# curl --resolve needs a numeric loopback IP on typical builds (unchanged if HOST is localhost).
 CURL_TRAEFIK_LOOPBACK_IP="${CURL_TRAEFIK_LOOPBACK_IP:-127.0.0.1}"
 
 MAILCOW_DIR="${MAILCOW_DIR:-/opt/mailcow-dockerized}"
@@ -1735,8 +1734,8 @@ Primary command:
   sudo bash scripts/orbytals-install.sh all
 
 Loopback / local binds (optional environment):
-  DEPLOYWERK_LOOPBACK_HOST   Host for API, nginx, DATABASE_URL, SMTP to Mailcow, etc. Use localhost or
-                             127.0.0.1 (default: localhost). Docker compose port binds use 127.0.0.1 when this is a loopback name.
+  DEPLOYWERK_LOOPBACK_HOST   Host for API, nginx, DATABASE_URL, SMTP to Mailcow, etc. Default 127.0.0.1;
+                             localhost is equivalent. Docker compose port binds use 127.0.0.1 when this is a loopback name.
   MAILCOW_HTTP_BIND          Override Mailcow HTTP bind (default: same as DEPLOYWERK_LOOPBACK_HOST)
   MAILCOW_HTTPS_BIND         Override Mailcow HTTPS bind (default: same as DEPLOYWERK_LOOPBACK_HOST)
   MAILCOW_IPV4_NETWORK       Pin Mailcow internal n.n.n prefix for n.n.n.0/24 (default: auto free /24)

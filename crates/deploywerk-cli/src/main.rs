@@ -312,7 +312,7 @@ fn config_path() -> Result<PathBuf> {
 
 fn default_config() -> ConfigFile {
     ConfigFile {
-        base_url: "http://localhost:8080".into(),
+        base_url: "http://127.0.0.1:8080".into(),
         token: None,
     }
 }

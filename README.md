@@ -56,9 +56,9 @@ DeployWerk runs **natively** (systemd + API + nginx on a **loopback** port). Oth
 | Technitium | 53, 5380 | DNS (optional automation) |
 | Synapse | 8008 (internal) | Matrix; `/.well-known` routing in Traefik |
 
-Point **Traefik** at `http://HOST_LOOPBACK:PORT` where nginx serves the SPA (e.g. `localhost:8085` or Docker bridge IP to host). See [docs/traefik/orbytals-file-provider.example.yml](docs/traefik/orbytals-file-provider.example.yml) for Matrix `/.well-known` priority over the app.
+Point **Traefik** at `http://HOST_LOOPBACK:PORT` where nginx serves the SPA (e.g. `127.0.0.1:8085` or Docker bridge IP to host). See [docs/traefik/orbytals-file-provider.example.yml](docs/traefik/orbytals-file-provider.example.yml) for Matrix `/.well-known` priority over the app.
 
-Use `GET /api/v1/bootstrap` and **Team → Integrations** for link slots. Set `DEPLOYWERK_LOCAL_SERVICE_DEFAULTS=true` only when the **API process** can reach integration URLs on `localhost` (native API on the host); when unset, `APP_ENV=development` enables the same preset merge. For **Docker Compose**, set `DEPLOYWERK_LOCAL_SERVICE_DEFAULTS=false` and use explicit `DEPLOYWERK_INTEGRATION_*_URL` values with **`host.docker.internal`** (as in [.env.example](.env.example)) so the `api` container reaches services published on the host; [docker-compose.yml](docker-compose.yml) adds `extra_hosts: host.docker.internal:host-gateway` on `api` (Linux-friendly).
+Use `GET /api/v1/bootstrap` and **Team → Integrations** for link slots. Set `DEPLOYWERK_LOCAL_SERVICE_DEFAULTS=true` only when the **API process** can reach integration URLs on `127.0.0.1` or `localhost` (native API on the host); when unset, `APP_ENV=development` enables the same preset merge. For **Docker Compose**, set `DEPLOYWERK_LOCAL_SERVICE_DEFAULTS=false` and use explicit `DEPLOYWERK_INTEGRATION_*_URL` values with **`host.docker.internal`** (as in [.env.example](.env.example)) so the `api` container reaches services published on the host; [docker-compose.yml](docker-compose.yml) adds `extra_hosts: host.docker.internal:host-gateway` on `api` (Linux-friendly).
 
 ---
 
@@ -76,9 +76,9 @@ cd web && npm install && npm run dev
 
 | URL / port | Role |
 |------------|------|
-| http://localhost:5173 | Vite UI (native default) or nginx front (`--docker`) |
-| http://localhost:8080 | API |
-| http://localhost:19000 / 19001 | MinIO S3 API / console on host |
+| http://127.0.0.1:5173 | Vite UI (native default) or nginx front (`--docker`) |
+| http://127.0.0.1:8080 | API |
+| http://127.0.0.1:19000 / 19001 | MinIO S3 API / console on host |
 | 5432 | Postgres on host |
 
 **Windows (PowerShell) without bash:** `docker compose up -d postgres minio minio-init` then start API and Vite as above.
@@ -87,7 +87,7 @@ cd web && npm install && npm run dev
 
 | Cause | Fix |
 |--------|-----|
-| API not running | `curl -sf http://localhost:8080/api/v1/health` |
+| API not running | `curl -sf http://127.0.0.1:8080/api/v1/health` |
 | Static host without proxy | Set `VITE_API_URL` at build time or use nginx/Vite proxy (see [.env.example](.env.example)) |
 | API on another port | Set `DEPLOYWERK_API_PROXY` in repo-root `.env` for Vite |
 
@@ -109,10 +109,10 @@ In [docker-compose.yml](docker-compose.yml), Authentik is published on **9000** 
 
 1. Set `AUTHENTIK_SECRET_KEY` and `AUTHENTIK_POSTGRES_PASSWORD` in `.env` (see [.env.example](.env.example)).
 2. `docker compose --profile authentik up -d`
-3. Wait: `curl -sf http://localhost:9000/-/health/live/`
-4. Open **https://localhost:9445/** or http://localhost:9000/if/admin/ — complete installer (browser may warn on self-signed TLS).
+3. Wait: `curl -sf http://127.0.0.1:9000/-/health/live/`
+4. Open **https://127.0.0.1:9445/** or http://127.0.0.1:9000/if/admin/ — complete installer (browser may warn on self-signed TLS).
 5. Create OAuth2/OpenID provider + application in Authentik; copy issuer URL.
-6. Set `AUTHENTIK_ISSUER`, `AUTHENTIK_CLIENT_ID`, `AUTHENTIK_CLIENT_SECRET`, `AUTHENTIK_REDIRECT_URI` (e.g. `http://localhost:5173/login/oidc/callback` for local Vite).
+6. Set `AUTHENTIK_ISSUER`, `AUTHENTIK_CLIENT_ID`, `AUTHENTIK_CLIENT_SECRET`, `AUTHENTIK_REDIRECT_URI` (e.g. `http://127.0.0.1:5173/login/oidc/callback` for local Vite).
 7. `docker compose restart api`
 
 Logs: `docker compose --profile authentik logs -f authentik-server authentik-worker`
@@ -157,10 +157,10 @@ Create `/etc/deploywerk/deploywerk.env` (`chmod 600`). Minimal:
 
 ```bash
 APP_ENV=production
-DATABASE_URL=postgresql://deploywerk:PASSWORD@localhost:5432/deploywerk
+DATABASE_URL=postgresql://deploywerk:PASSWORD@127.0.0.1:5432/deploywerk
 JWT_SECRET=...                    # openssl rand -base64 48
 SERVER_KEY_ENCRYPTION_KEY=...     # openssl rand -hex 32
-HOST=localhost
+HOST=127.0.0.1
 PORT=8080
 DEPLOYWERK_PUBLIC_APP_URL=https://app.example.com
 ```
@@ -195,16 +195,16 @@ journalctl -u deploywerk-api -f
 
 ### nginx
 
-Example: `root /var/www/deploywerk`; `location /api/` → `proxy_pass http://localhost:8080` with `X-Forwarded-*`; `location /` → `try_files` for SPA.
+Example: `root /var/www/deploywerk`; `location /api/` → `proxy_pass http://127.0.0.1:8080` with `X-Forwarded-*`; `location /` → `try_files` for SPA.
 
 - If **nginx terminates TLS** on this host: use **certbot** (`sudo certbot --nginx -d app.example.com`) after DNS points to the server.
-- If **Traefik terminates TLS**, bind nginx only to `localhost:8085` (or similar); do not compete for public 80/443.
+- If **Traefik terminates TLS**, bind nginx only to `127.0.0.1:8085` (or similar); do not compete for public 80/443.
 
 ### Verify
 
 ```bash
-curl -sf http://localhost:8080/api/v1/health
-curl -sf http://localhost:8080/api/v1/bootstrap | head
+curl -sf http://127.0.0.1:8080/api/v1/health
+curl -sf http://127.0.0.1:8080/api/v1/bootstrap | head
 ```
 
 Browser: public URL — SPA loads; `/api/v1/bootstrap` not 404.
@@ -219,8 +219,8 @@ If `DEPLOYWERK_DEPLOY_DISPATCH=external`, run `deploywerk-deploy-worker` with th
 
 When **Traefik** already owns **80/443**, DeployWerk’s nginx must **not** bind the same public ports for the same hostname.
 
-1. **API** listens on `localhost:8080`.
-2. **nginx** serves SPA + `/api` proxy on a **loopback port** (e.g. `localhost:8085`).
+1. **API** listens on `127.0.0.1:8080`.
+2. **nginx** serves SPA + `/api` proxy on a **loopback port** (e.g. `127.0.0.1:8085`).
 3. **Traefik** routes `Host(your.domain)` to the host (e.g. `http://172.17.0.1:8085` via Docker bridge gateway, or `host.docker.internal` where supported).
 
 ### Matrix + apex
@@ -232,7 +232,7 @@ TLS is usually **Traefik ACME**, not certbot on the loopback nginx.
 ### Example env (public site)
 
 - `DEPLOYWERK_PUBLIC_APP_URL=https://your.domain`
-- `HOST=localhost`, `PORT=8080`
+- `HOST=127.0.0.1`, `PORT=8080`
 - SMTP via Mailcow: `DEPLOYWERK_SMTP_*`
 - Platform Docker + Traefik labels: `DEPLOYWERK_PLATFORM_DOCKER_ENABLED`, `DEPLOYWERK_EDGE_MODE=traefik`, `DEPLOYWERK_TRAEFIK_DOCKER_NETWORK`, `DEPLOYWERK_APPS_BASE_DOMAIN`
 
@@ -257,7 +257,7 @@ sudo bash scripts/orbytals-install.sh all
 
 The script prompts interactively for operator credentials and stores its managed runtime state under `/etc/orbytals`. Re-runs are intended to be idempotent.
 
-**Loopback host:** **`127.0.0.1`** and **`localhost`** are both valid for DeployWerk API/nginx, `DATABASE_URL`, SMTP, etc. Defaults use **`localhost`**. **Docker Compose `ports:`** host addresses must be numeric IPs — the installer maps loopback names to **`127.0.0.1`** for Traefik, Garage, Technitium, and Mailcow publish binds. Traefik **`curl --resolve`** checks default to **`CURL_TRAEFIK_LOOPBACK_IP=127.0.0.1`**. See **`sudo bash scripts/orbytals-install.sh --help`** for the full env list.
+**Loopback host:** Defaults use **`127.0.0.1`**; **`localhost`** is equivalent for API/nginx, `DATABASE_URL`, SMTP, etc. **Docker Compose `ports:`** must use a numeric IP — the installer maps either loopback name to **`127.0.0.1`** for Traefik, Garage, Technitium, and Mailcow publish binds. Traefik **`curl --resolve`** uses **`CURL_TRAEFIK_LOOPBACK_IP=127.0.0.1`**. See **`sudo bash scripts/orbytals-install.sh --help`** for the full env list.
 
 **TLS / Let's Encrypt:** The installer does **not** run `certbot`. **Traefik** terminates HTTPS on **443** and obtains certificates from **Let's Encrypt** via the **ACME HTTP-01** challenge on **80** (see `certificatesResolvers.le` in the bundled Traefik static config). Certificates are stored in `/opt/traefik/acme/acme.json`. During install you supply **`ACME_EMAIL`** for Let's Encrypt registration. Plain HTTP on **80** redirects to HTTPS except `/.well-known/acme-challenge`, which ACME needs. **Mailcow** is set to **`SKIP_LETS_ENCRYPT=y`** so it does not request its own certs; Traefik still serves **`https://mail.<domain>`** with LE. Until DNS points at this host and ACME finishes, browsers may warn about the certificate; the script's verify step may use `curl -k` while polling.
 
@@ -308,12 +308,12 @@ External public URLs (via Traefik):
 
 Local-only URLs (host loopback):
 
-- `http://localhost:8080` (DeployWerk API)
-- `http://localhost:8085` (DeployWerk nginx front)
-- `http://localhost:18080` (Traefik dashboard local bind)
-- `http://localhost:3900` (Garage S3)
-- `http://localhost:5380` (Technitium web UI loopback bind)
-- `http://localhost:8082` and `https://localhost:8444` (Mailcow loopback binds)
+- `http://127.0.0.1:8080` (DeployWerk API)
+- `http://127.0.0.1:8085` (DeployWerk nginx front)
+- `http://127.0.0.1:18080` (Traefik dashboard local bind)
+- `http://127.0.0.1:3900` (Garage S3)
+- `http://127.0.0.1:5380` (Technitium web UI loopback bind)
+- `http://127.0.0.1:8082` and `https://127.0.0.1:8444` (Mailcow loopback binds)
 
 Internal Docker-network URLs (container-to-container):
 
@@ -368,7 +368,7 @@ Container-exposed or service-specific ports:
 | `3000` | TCP | Forgejo HTTP inside Docker network |
 | `8008` | TCP | Synapse HTTP inside Docker network |
 
-The installer keeps Cockpit direct `9292` access blocked by UFW unless `OPEN_COCKPIT_PORT=true` is explicitly set. Traefik’s local dashboard bind uses `localhost:18080` so it does not collide with the native DeployWerk API on `localhost:8080`.
+The installer keeps Cockpit direct `9292` access blocked by UFW unless `OPEN_COCKPIT_PORT=true` is explicitly set. Traefik’s local dashboard bind uses `127.0.0.1:18080` so it does not collide with the native DeployWerk API on `127.0.0.1:8080`.
 
 ---
 
@@ -418,7 +418,7 @@ Team mail product features (when enabled in code) are documented in this README 
 
 ### Local dev (Compose)
 
-The default [docker-compose.yml](docker-compose.yml) does **not** bundle a mail server or webmail (avoids host port clashes such as `8082`). [.env.example](.env.example) sets `DEPLOYWERK_SMTP_HOST=host.docker.internal` and port `587` so the **api** container can reach **Mailcow** on the host; the same file uses `host.docker.internal` for integration links. Compose adds `extra_hosts: host.docker.internal:host-gateway` on the `api` service. If the API runs **on the host** (not in Compose), use `localhost` for SMTP and integrations instead. Self-signed HTTPS to Portainer/Mailcow from inside the container may require extra TLS trust configuration.
+The default [docker-compose.yml](docker-compose.yml) does **not** bundle a mail server or webmail (avoids host port clashes such as `8082`). [.env.example](.env.example) sets `DEPLOYWERK_SMTP_HOST=host.docker.internal` and port `587` so the **api** container can reach **Mailcow** on the host; the same file uses `host.docker.internal` for integration links. Compose adds `extra_hosts: host.docker.internal:host-gateway` on the `api` service. If the API runs **on the host** (not in Compose), use `127.0.0.1` (or `localhost`) for SMTP and integrations instead. Self-signed HTTPS to Portainer/Mailcow from inside the container may require extra TLS trust configuration.
 
 ---
 
@@ -430,7 +430,7 @@ The default [docker-compose.yml](docker-compose.yml) does **not** bundle a mail 
 - [ ] PostgreSQL up; backups + tested restore path.
 - [ ] `DEPLOYWERK_PUBLIC_APP_URL` and optional `DEPLOYWERK_SMTP_*` for email.
 - [ ] Inline vs `DEPLOYWERK_DEPLOY_DISPATCH=external` worker decided; worker systemd enabled if external.
-- [ ] `curl -sf http://localhost:8080/api/v1/health` and browser SPA + `/api/v1/bootstrap` OK.
+- [ ] `curl -sf http://127.0.0.1:8080/api/v1/health` and browser SPA + `/api/v1/bootstrap` OK.
 
 ---
 
@@ -508,7 +508,7 @@ sudo ss -lunp | grep -E ':8053 '
 docker ps --format 'table {{.Names}}\t{{.Ports}}'
 ```
 
-The most common conflict is keeping native `deploywerk-api` on `localhost:8080` while also trying to bind Traefik’s local dashboard to the same port. The installer uses `localhost:18080` for the Traefik dashboard to avoid that.
+The most common conflict is keeping native `deploywerk-api` on `127.0.0.1:8080` while also trying to bind Traefik’s local dashboard to the same port. The installer uses `127.0.0.1:18080` for the Traefik dashboard to avoid that.
 
 Technitium DNS is published on **8053/tcp+udp** by default so it does not fight with typical host DNS listeners on **53** (for example `systemd-resolved` and libvirt `dnsmasq`). Clients must query **8053** unless you add your own forwarding from **53** to **8053**.
 
@@ -525,7 +525,7 @@ XRDP and HestiaCP are **optional** and conflict with DeployWerk if they fight fo
 Use these in order; all exist or are stubbed in the current codebase:
 
 - **`GET /api/v1/bootstrap`** — non-secret integration URLs for Traefik, Forgejo, Mailcow, Portainer, Technitium, Matrix client, etc.
-- **`DEPLOYWERK_LOCAL_SERVICE_DEFAULTS`** — one-shot fill for typical single-host `localhost` ports when the API runs on the **host** (not inside Docker). With Compose, prefer explicit `DEPLOYWERK_INTEGRATION_*_URL` using `host.docker.internal` (see [.env.example](.env.example)).
+- **`DEPLOYWERK_LOCAL_SERVICE_DEFAULTS`** — one-shot fill for typical single-host `127.0.0.1` ports when the API runs on the **host** (not inside Docker). With Compose, prefer explicit `DEPLOYWERK_INTEGRATION_*_URL` using `host.docker.internal` (see [.env.example](.env.example)).
 - **Forgejo / GitHub / GitLab** — configure webhooks to DeployWerk team endpoints (see Webhooks table).
 - **OIDC** — align `AUTHENTIK_*` with your IdP; optional SCIM.
 - **Platform Docker + Traefik** — `DEPLOYWERK_EDGE_MODE=traefik` and app container labels when deploying user apps on the same Traefik network.
@@ -550,7 +550,7 @@ Full routes: `rg "route\\(" crates/deploywerk-api/src`
 
 ```bash
 cargo install --path crates/deploywerk-cli
-export DEPLOYWERK_API_URL=http://localhost:8080
+export DEPLOYWERK_API_URL=http://127.0.0.1:8080
 deploywerk auth login --email you@example.com
 deploywerk teams list
 ```
