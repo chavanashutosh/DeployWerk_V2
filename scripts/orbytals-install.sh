@@ -737,6 +737,7 @@ trigger_traefik_acme() {
   # We use -k because Traefik serves a default cert until ACME completes.
   local hosts=(
     "${ORBYTALS_APP_DOMAIN}"
+    "${ORBYTALS_APEX_DOMAIN}"
     "${ORBYTALS_API_DOMAIN}"
     "${ORBYTALS_MAIL_DOMAIN}"
     "${ORBYTALS_GIT_DOMAIN}"
@@ -1493,6 +1494,7 @@ verify_garage_s3_endpoint() {
 verify_install() {
   show_port_status
   verify_traefik_https "${ORBYTALS_APP_DOMAIN}" "/"
+  verify_traefik_https "${ORBYTALS_APEX_DOMAIN}" "/"
   verify_traefik_https "${ORBYTALS_API_DOMAIN}" "/api/v1/bootstrap"
   verify_traefik_https "${ORBYTALS_MAIL_DOMAIN}" "/"
   verify_traefik_https "${ORBYTALS_GIT_DOMAIN}" "/"

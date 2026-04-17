@@ -257,6 +257,8 @@ sudo bash scripts/orbytals-install.sh all
 
 The script prompts interactively for operator credentials and stores its managed runtime state under `/etc/orbytals`. Re-runs are intended to be idempotent.
 
+**TLS / Let's Encrypt:** The installer does **not** run `certbot`. **Traefik** terminates HTTPS on **443** and obtains certificates from **Let's Encrypt** via the **ACME HTTP-01** challenge on **80** (see `certificatesResolvers.le` in the bundled Traefik static config). Certificates are stored in `/opt/traefik/acme/acme.json`. During install you supply **`ACME_EMAIL`** for Let's Encrypt registration. Plain HTTP on **80** redirects to HTTPS except `/.well-known/acme-challenge`, which ACME needs. **Mailcow** is set to **`SKIP_LETS_ENCRYPT=y`** so it does not request its own certs; Traefik still serves **`https://mail.<domain>`** with LE. Until DNS points at this host and ACME finishes, browsers may warn about the certificate; the script's verify step may use `curl -k` while polling.
+
 Useful follow-up commands:
 
 ```bash
@@ -274,6 +276,7 @@ Managed install roots default to:
 
 The installer assumes public DNS already points the following names at the Traefik host:
 
+- `orbytals.com` (apex; same DeployWerk site as `app.`, required for HTTPS on the apex host)
 - `app.orbytals.com`
 - `api.orbytals.com`
 - `mail.orbytals.com`
@@ -288,6 +291,7 @@ The installer assumes public DNS already points the following names at the Traef
 
 External public URLs (via Traefik):
 
+- `https://orbytals.com` (apex; same SPA as `app.`)
 - `https://app.orbytals.com`
 - `https://api.orbytals.com` (API routes like `/api/v1/health`, `/api/v1/bootstrap`)
 - `https://mail.orbytals.com`

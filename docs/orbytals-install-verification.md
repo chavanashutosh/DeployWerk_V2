@@ -1,5 +1,9 @@
 # Orbytals install verification (`scripts/orbytals-install.sh all`)
 
+## TLS / Let's Encrypt (Traefik ACME)
+
+Public HTTPS is served by **Traefik** using **Let's Encrypt** through Traefik's **ACME** client (**HTTP-01** on port **80**). The installer does **not** run `certbot`. Certs live on the host at `/opt/traefik/acme/acme.json` (mounted into the Traefik container). **Port 80** must be reachable from the internet for issuance and renewal; Traefik redirects normal HTTP traffic to HTTPS except `/.well-known/acme-challenge`. If verification prints "TLS certificate verify skipped", ACME may still be completing or the chain is not yet trusted; confirm DNS **A/AAAA** for every hostname (including the **apex** domain) points at this server.
+
 After `sudo bash scripts/orbytals-install.sh all`, the script runs **verify** steps: port summary, HTTPS checks through Traefik on `127.0.0.1:443` with `--resolve` (SNI), then loopback HTTP checks for DeployWerk and Garage.
 
 ## How to read the results
