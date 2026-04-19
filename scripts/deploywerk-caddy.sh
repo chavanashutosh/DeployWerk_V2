@@ -143,14 +143,24 @@ resolve_workdir() {
 }
 
 resolve_api_bin() {
+  local wd rel
   if [[ -n "${DEPLOYWERK_API_BIN:-}" ]]; then
     [[ -x "$DEPLOYWERK_API_BIN" ]] || die "DEPLOYWERK_API_BIN not executable: $DEPLOYWERK_API_BIN"
     echo "$DEPLOYWERK_API_BIN"; return
   fi
   command -v deploywerk-api >/dev/null 2>&1 && { command -v deploywerk-api; return; }
-  local rel="$REPO_ROOT/target/release/deploywerk-api"
+  wd="$(resolve_workdir)"
+  rel="$wd/target/release/deploywerk-api"
   [[ -x "$rel" ]] && { echo "$rel"; return; }
-  die "deploywerk-api not found (PATH, DEPLOYWERK_API_BIN, or cargo build --release -p deploywerk-api)"
+  rel="$REPO_ROOT/target/release/deploywerk-api"
+  [[ -x "$rel" ]] && { echo "$rel"; return; }
+  echo "deploywerk-api not found. Checked:" >&2
+  echo "  PATH, DEPLOYWERK_API_BIN, $wd/target/release/deploywerk-api, $REPO_ROOT/target/release/deploywerk-api" >&2
+  echo "Build once (from repo root, e.g. /opt/deploywerk):" >&2
+  echo "  cargo build --release -p deploywerk-api --bin deploywerk-api" >&2
+  echo "Or:  sudo bash \"$0\" redeploy   # builds API then start" >&2
+  echo "Or set DEPLOYWERK_API_BIN=/full/path/to/deploywerk-api" >&2
+  die "deploywerk-api missing"
 }
 
 # sudo resets PATH; rustup usually installs cargo under ~/.cargo/bin (e.g. /root/.cargo/bin).
