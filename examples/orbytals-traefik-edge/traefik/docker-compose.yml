@@ -1,7 +1,9 @@
 # Traefik edge (orbytals.com + hermesapp.live). Run from this directory:
 #   docker compose up -d
 #
-# Prerequisites: external Docker network (default name "proxy"; or run scripts/orbytals-install.sh).
+# Prerequisites: external Docker network (default name "proxy"). Create with:
+#   docker network create proxy
+# (This repo no longer provides an all-in-one installer; use manual compose or aaPanel.)
 # Attach backends (Synapse, Mailcow nginx, etc.)
 # to the same network so Docker provider labels and file-provider upstream names resolve.
 #

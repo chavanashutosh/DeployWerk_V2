@@ -1,6 +1,24 @@
-# Orbytals install verification (`scripts/orbytals-install.sh all`)
+# Install verification
 
-## TLS / Let's Encrypt (Traefik ACME)
+## Current recommendation: aaPanel + DeployWerk
+
+The **all-in-one** shell installer (`scripts/orbytals-install.sh all`, Traefik, Mailcow, verify hooks, `/etc/orbytals/install.env`, etc.) has been **removed** from this repository. Production guidance is **aaPanel** (or your own stack) plus manual DeployWerk setup — see README → **Production with aaPanel** and `scripts/orbytals-install.sh help`.
+
+### aaPanel quick verification checklist
+
+1. **Panel URL** from the aaPanel installer output opens in a browser (allow the **panel port** in your cloud security group / firewall).
+2. **Sites:** Nginx serves your app; **Let’s Encrypt** succeeds for your public hostname (ports **80** and **443** reachable from the Internet).
+3. **DeployWerk API:** `curl -sf http://127.0.0.1:8080/api/v1/health` returns JSON (adjust host/port if you changed them).
+4. **Public:** `https://your-domain/api/v1/health` (or your vhost path) returns **200** through the panel’s reverse proxy.
+5. **Database:** PostgreSQL accepts `DATABASE_URL` from `/etc/deploywerk/deploywerk.env`.
+
+---
+
+## Legacy: Orbytals all-in-one installer (historical reference)
+
+The sections below described **`scripts/orbytals-install.sh all`**, Traefik ACME, UFW, Mailcow networks, and **`verify`** behavior. They are **not** applicable to the current minimal **`orbytals-install.sh`** (aaPanel helper only). Kept for operators who still run a **manually** composed Traefik/Mailcow stack based on `examples/orbytals-traefik-edge/`.
+
+### TLS / Let's Encrypt (Traefik ACME)
 
 Public HTTPS is served by **Traefik** using **Let's Encrypt** (production ACME directory by default) via **HTTP-01** on port **80**. The installer does **not** run `certbot`. Certs live on the host at `/opt/traefik/acme/acme.json` (mounted into the Traefik container). **Port 80** must be reachable from the internet for issuance and renewal; Traefik redirects normal HTTP traffic to HTTPS except `/.well-known/acme-challenge`. After **`install`** / **`redeploy`**, **`wait_for_traefik_le_all_hosts`** waits (up to **`TRAEFIK_ACME_WAIT_SECONDS`**) for **trusted** TLS on every public hostname. **`verify`** uses **`VERIFY_STRICT_TLS=true`** by default (certificate verification on; no `curl -k`). If checks fail, confirm DNS **A/AAAA** for every hostname (including the **apex**) points at this server. **Mailcow** uses **`SKIP_LETS_ENCRYPT=y`** while Traefik still obtains **Let's Encrypt** for **`https://mail.<domain>`** (single ACME client on the host).
 
@@ -8,7 +26,7 @@ Public HTTPS is served by **Traefik** using **Let's Encrypt** (production ACME d
 
 After `sudo bash scripts/orbytals-install.sh all`, the script runs **verify** steps: port summary, HTTPS checks through Traefik on **`127.0.0.1:443`** with `--resolve` (SNI), then loopback HTTP checks for DeployWerk and Garage.
 
-## How to read the results
+### How to read the results
 
 | Check | Healthy sign | Your run (example) |
 |--------|----------------|-------------------|
@@ -23,11 +41,11 @@ After `sudo bash scripts/orbytals-install.sh all`, the script runs **verify** st
 
 The verify helper treats **any** HTTP status line as success for Traefik HTTPS checks (including `404`), because it proves Traefik terminated TLS and routed somewhere. **Timeouts** mean no HTTP response (wrong upstream, firewall drop, or upstream not listening on the address Traefik uses).
 
-## Ports to allow (firewall / security groups)
+### Ports to allow (firewall / security groups)
 
 The installer configures **UFW** on the host. If you also use a **cloud firewall** (Hetzner Firewall, AWS security groups, etc.), mirror the same **inbound** rules there; otherwise traffic can be dropped before it reaches UFW.
 
-### Inbound from the Internet (typical defaults)
+#### Inbound from the Internet (typical defaults)
 
 | Port(s) | Protocol | Purpose |
 |---------|----------|---------|
@@ -69,7 +87,7 @@ When **`OPEN_COCKPIT_PORT=true`** (default **false**):
 |---------|----------|---------|
 | **`9292`** (default `COCKPIT_PORT`) | TCP | Cockpit exposed on the public interface (not only via Traefik) |
 
-### Inbound from Docker private networks only (host UFW)
+#### Inbound from Docker private networks only (host UFW)
 
 These rules allow **containers** (e.g. Traefik) to reach **services bound on the host**. They use **`ufw allow from 172.16.0.0/12`** (RFC1918 range used by default Docker networks). You normally **do not** open these ports to `0.0.0.0/0` on a cloud firewall.
 
@@ -78,7 +96,7 @@ These rules allow **containers** (e.g. Traefik) to reach **services bound on the
 | **8085** (`DEPLOYWERK_NGINX_PORT`) | TCP | DeployWerk nginx (Traefik → host SPA + `/api/` proxy) |
 | **9292** | TCP | Cockpit on the host when **`OPEN_COCKPIT_PORT=false`** (Traefik → Cockpit only from Docker, not from the whole Internet) |
 
-### Loopback-only (no WAN rule)
+#### Loopback-only (no WAN rule)
 
 These are bound to **`127.0.0.1`** (or `localhost`, or otherwise not exposed on `0.0.0.0`) in the default layout; **do not** need to be opened on a perimeter firewall:
 
@@ -93,13 +111,13 @@ These are bound to **`127.0.0.1`** (or `localhost`, or otherwise not exposed on 
 
 **Garage RPC** default **3901** is used between Garage peers; single-node install keeps it on the container network. Adjust if you change `GARAGE_*` or Traefik/Mailcow env vars in the script.
 
-### Summary checklist for a public edge server
+#### Summary checklist for a public edge server
 
 1. **WAN:** **22**, **80**, **443**, **2222** + mail/DNS/Matrix toggles as in the tables above.  
 2. **Cloud SG:** match UFW; avoid exposing **8080**, **8085**, **9292** to the world unless you intend to (the installer keeps API/nginx/Cockpit off the public interface by default, except **9292** when `OPEN_COCKPIT_PORT=true`).  
 3. **Docker → host:** ensure UFW (or equivalent) allows **`172.16.0.0/12` → 8085** and **`172.16.0.0/12` → 9292** when Cockpit is not public—see the next section.
 
-## Why `app` / `api` / `cockpit` timed out (common on Linux)
+### Why `app` / `api` / `cockpit` timed out (common on Linux)
 
 1. **DeployWerk nginx** was only listening on **`127.0.0.1:8085`** (or `localhost:8085`), while Traefik (in Docker) calls the host using the **Docker bridge gateway** (often `172.17.0.1`). Traffic to `172.17.0.1:8085` never hit a listening socket → packets dropped or hanging → **curl timeout**.
 
@@ -112,7 +130,7 @@ The installer was updated to:
 
 Re-run **`install_native_deploywerk`** (full `all` is fine) or at least re-apply nginx + UFW from the updated script, then run **`sudo bash scripts/orbytals-install.sh verify`**.
 
-## Mailcow: `Pool overlaps with other one on this address space`
+### Mailcow: `Pool overlaps with other one on this address space`
 
 Mailcow's default internal **`172.22.1.0/24`** often clashes with **another Docker network** already on the host (Traefik, Matrix, Forgejo, etc.), so Docker refuses to create **`mailcowdockerized_mailcow-network`**. Overlaps are often **IPv6** pools even when the message does not say so.
 
@@ -135,7 +153,7 @@ sudo docker network rm mailcowdockerized_mailcow-network 2>/dev/null || true
 
 Pull the updated installer (so **`mailcow.conf`** gets a new **`IPV4_NETWORK`**), then from your repo run **`sudo bash scripts/orbytals-install.sh all`**, or from **`/opt/mailcow-dockerized`** run **`docker compose`** with the same **`-f`** list as **`install_mailcow`** uses, then **`up -d`**.
 
-## `404` from Traefik for mail / git / dns / Matrix
+### `404` from Traefik for mail / git / dns / Matrix
 
 An HTTP/2 `404` with a small body usually means **Traefik handled the request** but no router matched, or the backend returned `404` for that path. Typical follow-ups:
 
@@ -143,12 +161,12 @@ An HTTP/2 `404` with a small body usually means **Traefik handled the request** 
 - Let **ACME** finish (`acme.json`). With **`VERIFY_STRICT_TLS=true`**, **`verify`** does not accept `curl -k`; use **`VERIFY_STRICT_TLS=false`** only while debugging, or increase **`TRAEFIK_ACME_WAIT_SECONDS`** if issuance is slow.
 - For Matrix, **`.well-known`** and federation often need extra routes on the **apex** domain; the bundled file provider only wires what the template describes.
 
-## `install.env` and `apt` (from earlier runs)
+### `install.env` and `apt` (from earlier runs)
 
 - State file must be valid **`KEY=value`** lines; spaces immediately after **`=`** are unsafe when the file is sourced (see script sanitizer and README troubleshooting).
 - **`apt update`** mirror hash/size errors are usually transient; the installer retries `apt-get update`.
 
-## Quick manual checks (on the server)
+### Quick manual checks (on the server)
 
 ```bash
 # Traefik still routing after fixes

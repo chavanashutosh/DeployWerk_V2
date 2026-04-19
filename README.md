@@ -236,141 +236,45 @@ TLS is usually **Traefik ACME**, not certbot on the loopback nginx.
 - SMTP via Mailcow: `DEPLOYWERK_SMTP_*`
 - Platform Docker + Traefik labels: `DEPLOYWERK_PLATFORM_DOCKER_ENABLED`, `DEPLOYWERK_EDGE_MODE=traefik`, `DEPLOYWERK_TRAEFIK_DOCKER_NETWORK`, `DEPLOYWERK_APPS_BASE_DOMAIN`
 
-### Orbytals one-script installer (Ubuntu)
+### Production with aaPanel (control panel)
 
-The supported production installer is now [scripts/orbytals-install.sh](scripts/orbytals-install.sh). It provisions the Ubuntu 24 host and wires the Orbytals stack together behind Traefik:
+For a **hosting panel** workflow, install **[aaPanel](https://www.aapanel.com/docs/guide/quickstart.html)** on a supported OS (Ubuntu/Debian/etc.), then use it for **Nginx**, **PostgreSQL**, **Let’s Encrypt**, optional **Docker**, and firewall UI.
 
-- Traefik
-- DeployWerk (native `systemd` + loopback `nginx`)
-- Mailcow / webmail
-- Forgejo
-- Synapse / Matrix
-- Technitium DNS (published on host **8053/tcp+udp**; not standard **53**)
-- Cockpit
-- Garage object storage bootstrap
+This repository no longer ships an all-in-one shell installer for Traefik, Mailcow, Matrix, and the rest. Use aaPanel (or your own automation) for the OS stack; configure DeployWerk from [`.env.example`](.env.example) and the sections above (paths, nginx, API).
 
-Run it from a clone of this repo:
+**Helper script** — prints the official aaPanel one-liner, firewall hints, and DeployWerk reminders:
 
 ```bash
-sudo bash scripts/orbytals-install.sh all
+sudo bash scripts/orbytals-install.sh help
+sudo bash scripts/orbytals-install.sh instructions   # default
+sudo bash scripts/orbytals-install.sh download       # saves upstream script to /tmp only; review before running
 ```
 
-The script prompts interactively for operator credentials and stores its managed runtime state under `/etc/orbytals`. Re-runs are intended to be idempotent.
+The upstream aaPanel installer is **interactive**. After it finishes, open the **panel URL** and port it prints (allow that port in your cloud security group / UFW). Typical public needs: **22**, **80**, **443**, plus the panel port shown in the installer output.
 
-**Loopback host:** Defaults use **`127.0.0.1`**; **`localhost`** is equivalent for API/nginx, `DATABASE_URL`, SMTP, etc. **Docker Compose `ports:`** must use a numeric IP — the installer maps either loopback name to **`127.0.0.1`** for Traefik, Garage, Technitium, and Mailcow publish binds. Traefik **`curl --resolve`** uses **`CURL_TRAEFIK_LOOPBACK_IP=127.0.0.1`**. See **`sudo bash scripts/orbytals-install.sh --help`** for the full env list.
+**DeployWerk on aaPanel (summary):** create Postgres + site, set `/etc/deploywerk/deploywerk.env`, build and run `deploywerk-api` (e.g. systemd), serve `web/dist` from `/var/www/deploywerk`, reverse-proxy `/api` to `127.0.0.1:8080`.
 
-**TLS / Let's Encrypt:** The installer does **not** run `certbot`. **Traefik** terminates HTTPS on **443** and obtains **production** Let's Encrypt certificates via **ACME HTTP-01** on **80** (resolver `le`; CA URL defaults to `https://acme-v02.api.letsencrypt.org/directory`, overridable with **`TRAEFIK_ACME_CASERVER`** for staging only). Certificates are stored in `/opt/traefik/acme/acme.json`. You supply **`ACME_EMAIL`** during install (also written to Mailcow as **`ACME_ACCOUNT_EMAIL`** for consistency). Plain HTTP on **80** redirects to HTTPS except `/.well-known/acme-challenge`. Every routed hostname (app, api, mail, git, dns, Traefik dashboard, portal, Matrix, etc.) uses **`tls.certresolver=le`** so browsers get real LE chains. **Mailcow** keeps **`SKIP_LETS_ENCRYPT=y`**: Mailcow must not run a second HTTP-01 client on this host while Traefik owns public **80/443** for **`https://mail.<domain>`** — that URL still uses **Let's Encrypt** from Traefik. After the full stack is up, **`wait_for_traefik_le_all_hosts`** polls until **`curl`** trusts all sites (or times out; tune **`TRAEFIK_ACME_WAIT_SECONDS`**). **`verify`** defaults to **`VERIFY_STRICT_TLS=true`** (no `curl -k`); set **`VERIFY_STRICT_TLS=false`** only while debugging.
+### Reference: manual Traefik / multi-service examples
 
-**Mailcow Docker network:** If **`docker compose up`** fails with **pool overlaps** on **`mailcow-network`**, the installer picks a free **`IPV4_NETWORK`** (Mailcow internal **`/24`**) using **`python3`** + **`docker network inspect`**, sets **`ENABLE_IPV6=false`** by default (many overlaps are IPv6; set **`MAILCOW_ENABLE_IPV6=true`** if you need it), removes a stale **`${COMPOSE_PROJECT_NAME}_mailcow-network`** (default **`mailcowdockerized_mailcow-network`**) before **`up`**, and falls back to **`10.254.99`** if no candidate fits. Override with **`MAILCOW_IPV4_NETWORK`** / **`MAILCOW_IPV6_NETWORK`**. See [docs/orbytals-install-verification.md](docs/orbytals-install-verification.md).
+Optional **Docker + Traefik** layouts (Forgejo, Mailcow, Synapse, etc.) are **not** installed by any script here. See:
 
-Useful follow-up commands:
+- [`examples/orbytals-traefik-edge/`](examples/orbytals-traefik-edge/) — sample Traefik compose and labels
+- [`docs/traefik/orbytals-file-provider.example.yml`](docs/traefik/orbytals-file-provider.example.yml) — file-provider patterns (e.g. Matrix `/.well-known`)
 
-```bash
-sudo bash scripts/orbytals-install.sh verify
-sudo bash scripts/orbytals-install.sh clean
-sudo bash scripts/orbytals-install.sh redeploy
-```
+If you run Traefik on **80/443**, keep DeployWerk’s nginx/API on **loopback** ports and route public hostnames in Traefik (same idea as section **Traefik on the same host** above).
 
-Managed install roots default to:
+### Typical production ports (DeployWerk + aaPanel)
 
-- `/opt/orbytals/edge`
-- `/opt/orbytals/services`
-- `/opt/mailcow-dockerized`
-- `/etc/deploywerk/deploywerk.env`
-
-The installer assumes public DNS already points the following names at the Traefik host:
-
-- `orbytals.com` (apex; same DeployWerk site as `app.`, required for HTTPS on the apex host)
-- `app.orbytals.com`
-- `api.orbytals.com`
-- `mail.orbytals.com`
-- `git.orbytals.com`
-- `dns.orbytals.com`
-- `traefik.orbytals.com`
-- `home.orbytals.com` (optional launch page with links to all apps; default `home.<apex>` from `ORBYTALS_PORTAL_DOMAIN`)
-- `cockpit.orbytals.com`
-- `chat.hermesapp.live`
-- `api.hermesapp.live`
-
-### URLs
-
-External public URLs (via Traefik):
-
-- `https://orbytals.com` (apex; same SPA as `app.`)
-- `https://app.orbytals.com`
-- `https://api.orbytals.com` (API routes like `/api/v1/health`, `/api/v1/bootstrap`)
-- `https://mail.orbytals.com`
-- `https://git.orbytals.com`
-- `https://dns.orbytals.com` (Technitium web UI)
-- `https://traefik.orbytals.com`
-- `https://home.orbytals.com` (static nginx portal listing stack links)
-- `https://cockpit.orbytals.com`
-- `https://chat.hermesapp.live` (Matrix/Synapse, e.g. `/_matrix/client/versions`)
-- `https://api.hermesapp.live` (Synapse homeserver API, e.g. `/_matrix/client/versions`)
-
-Local-only URLs (host loopback):
-
-- `http://127.0.0.1:8080` (DeployWerk API)
-- `http://127.0.0.1:8085` (DeployWerk nginx front)
-- `http://127.0.0.1:18080` (Traefik dashboard local bind)
-- `http://127.0.0.1:3900` (Garage S3)
-- `http://127.0.0.1:5380` (Technitium web UI loopback bind)
-- `http://127.0.0.1:8082` and `https://127.0.0.1:8444` (Mailcow loopback binds)
-
-Internal Docker-network URLs (container-to-container):
-
-- `http://synapse:8008` (Traefik routes `chat.hermesapp.live` to this on the `proxy` network)
-
-### Matrix / mobile app connection
-
-- **Web chat**: `https://chat.hermesapp.live` (Element Web)
-- **Mobile app homeserver URL**: **`https://api.hermesapp.live`**
-  - `https://chat.hermesapp.live` also serves `/.well-known/matrix/client` and `/.well-known/matrix/server` for clients that support discovery.
-
-### Ports
-
-Public inbound ports opened by the installer by default:
-
-| Port | Protocol | Service |
-|------|----------|---------|
+| Port | Protocol | Typical use |
+|------|----------|-------------|
 | `22` | TCP | SSH |
-| `80` | TCP | Traefik HTTP / ACME |
-| `443` | TCP | Traefik HTTPS |
-| `25` | TCP | Mailcow SMTP |
-| `465` | TCP | Mailcow SMTPS |
-| `587` | TCP | Mailcow submission |
-| `110` | TCP | Mailcow POP3 |
-| `995` | TCP | Mailcow POP3S |
-| `143` | TCP | Mailcow IMAP |
-| `993` | TCP | Mailcow IMAPS |
-| `4190` | TCP | Mailcow ManageSieve |
-| `8053` | TCP/UDP | Technitium DNS (non-standard; avoids host stub resolvers on `53`) |
-| `8448` | TCP | Matrix federation |
+| `80` | TCP | HTTP (sites, ACME HTTP-01) |
+| `443` | TCP | HTTPS |
+| — | — | aaPanel **panel** port: use the value printed when the panel installer finishes |
+| `8080` | TCP | DeployWerk API (bind to `127.0.0.1` when Nginx terminates TLS) |
+| `8085` | TCP | Optional: DeployWerk nginx on loopback when a reverse proxy fronts TLS |
 
-Loopback-only host ports used by the installer:
-
-| Port | Protocol | Service |
-|------|----------|---------|
-| `8080` | TCP | DeployWerk API |
-| `8085` | TCP | DeployWerk nginx |
-| `8082` | TCP | Mailcow HTTP binding for Traefik |
-| `8444` | TCP | Mailcow HTTPS binding for host-local use |
-| `9292` | TCP | Cockpit host socket, proxied by Traefik by default |
-| `18080` | TCP | Traefik local dashboard bind |
-| `3900` | TCP | Garage S3 API |
-| `3902` | TCP | Garage web endpoint |
-| `3903` | TCP | Garage admin API |
-| `5380` | TCP | Technitium web UI, proxied by Traefik |
-
-Container-exposed or service-specific ports:
-
-| Port | Protocol | Service |
-|------|----------|---------|
-| `2222` | TCP | Forgejo SSH |
-| `3000` | TCP | Forgejo HTTP inside Docker network |
-| `8008` | TCP | Synapse HTTP inside Docker network |
-
-The installer keeps Cockpit direct `9292` access blocked by UFW unless `OPEN_COCKPIT_PORT=true` is explicitly set. Traefik’s local dashboard bind uses `127.0.0.1:18080` so it does not collide with the native DeployWerk API on `127.0.0.1:8080`.
+Open **mail**, **DNS**, **Matrix federation**, or other ports only if you run those services on the same host.
 
 ---
 
@@ -426,7 +330,7 @@ The default [docker-compose.yml](docker-compose.yml) does **not** bundle a mail 
 
 ## Production checklist
 
-- [ ] DNS **A/AAAA** to server; TLS (Let’s Encrypt or Traefik ACME) and renewal tested.
+- [ ] DNS **A/AAAA** to server; TLS (aaPanel Let’s Encrypt, Traefik ACME, or your edge) and renewal tested.
 - [ ] Firewall: **22**, **80**, **443** (and mail/DNS ports only if those services run on the same host).
 - [ ] `APP_ENV=production`; strong `JWT_SECRET` and `SERVER_KEY_ENCRYPTION_KEY`; `/etc/deploywerk/deploywerk.env` **0600** and backed up.
 - [ ] PostgreSQL up; backups + tested restore path.
@@ -448,73 +352,36 @@ Prepend your public API origin. Secrets: see [.env.example](.env.example).
 
 ---
 
-## Installer notes
+## Helper script (aaPanel)
 
-[scripts/orbytals-install.sh](scripts/orbytals-install.sh) performs host bootstrap itself: packages, Docker, Cockpit, Node.js 22, Rust, nginx/PostgreSQL prerequisites, Traefik, Garage, and the managed application/service stacks.
+[scripts/orbytals-install.sh](scripts/orbytals-install.sh) only prints **aaPanel** install steps (or downloads the upstream script to `/tmp`). It does **not** install Docker stacks, Mailcow, or Traefik. See **Production with aaPanel** above.
 
-Interpret **`verify`** output (timeouts vs `404`, Traefik vs loopback): [docs/orbytals-install-verification.md](docs/orbytals-install-verification.md).
-
-Cockpit-specific behavior in the installer:
-
-- installs `cockpit-storaged`, `udisks2-lvm2`, and `udisks2-btrfs` for storage support, with `udisks2-iscsi` used when available in apt sources
-- installs `cockpit-packagekit` and `packagekit` for software updates
-- enables `NetworkManager` by default for Cockpit update support on Ubuntu server
-- exposes Cockpit primarily through `https://cockpit.orbytals.com`
+Legacy verification notes for the **removed** all-in-one installer: [docs/orbytals-install-verification.md](docs/orbytals-install-verification.md).
 
 ---
 
-## Troubleshooting (installer)
+## Troubleshooting (production)
 
-### `/etc/orbytals/install.env: line N: …: command not found`
+### HTTPS / reverse proxy
 
-That usually means a line in the state file was not a valid `KEY=value` assignment (often a **secret split across lines**, e.g. part of a Garage key on its own row), or there are **spaces after `=`** (bash then treats the next token as a command, e.g. `GARAGE_ACCESS_KEY_ID=             GK7c…`). Current installers **sanitize** `/etc/orbytals/install.env` before sourcing it (drop invalid lines, trim values, re-quote assignments), so rerunning `scripts/orbytals-install.sh` should clear the error. If a secret was truncated, remove the affected key from the file or run `sudo rm -f /etc/orbytals/install.env` and run the installer again so prompts regenerate state.
+`curl https://app.example.com` from **the same machine** often fails when DNS points at the server’s public IP but **hairpin NAT** is not available. Test the API on loopback: `curl -sf http://127.0.0.1:8080/api/v1/health`. From outside, use a client that resolves your public DNS correctly.
 
-### Post-install `verify` shows HTTPS failures from the server itself
+If Nginx or Traefik returns **502** for `/api`, confirm `deploywerk-api` listens on `127.0.0.1:8080` (or the upstream you configured) and that SELinux/UFW allows the proxy to connect.
 
-`curl https://app.example.com` from **the same machine** often fails when DNS points at the server’s public IP but the router does **not** support hairpin NAT (TCP never reaches Traefik). The installer’s smoke checks therefore use **`curl --resolve …:443:127.0.0.1`** (numeric loopback; `curl --resolve` expects an IP) so Traefik is exercised on loopback with the correct hostname. Client machines still need correct **public DNS** (A/AAAA) to reach the site from the Internet.
+### Garage (optional S3)
 
-Timeouts to **app** / **api** / **cockpit** while loopback `8085` / `8080` succeed usually mean Traefik (Docker) could not reach **host** nginx or Cockpit (listen address + UFW); see [docs/orbytals-install-verification.md](docs/orbytals-install-verification.md).
-
-### Garage bootstrap fails with Docker `409` / `unable to upgrade to tcp, received 409`
-
-This usually means the `garage` container is **not running** or is **restarting** when the installer tries to `docker exec` into it.
-
-Check:
-
-```bash
-docker ps --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}'
-docker logs garage --tail 200
-```
-
-### Garage: `Invalid RPC secret key: expected 32 bytes of random hex`
-
-Garage’s `rpc_secret` in `garage.toml` must be **exactly 64 hexadecimal characters** (32 random bytes). The installer generates this automatically. If you see this error from an older run, pull an updated `scripts/orbytals-install.sh` and re-run the Garage step (or delete the bad `GARAGE_RPC_SECRET` from the installer state file so it can be regenerated).
-
-### Garage restarts with `missing field root_domain` under `[s3_web]`
-
-Recent Garage releases require `root_domain` in the `[s3_web]` section of `garage.toml`. The installer writes a default (`.web.garage.localhost`); set `GARAGE_S3_WEB_ROOT_DOMAIN` before install if you use a real DNS suffix for bucket websites. If you upgraded from an older generated config, add `root_domain` next to `bind_addr` under `[s3_web]` and run `docker compose up -d` again in the Garage directory (often `/opt/orbytals/garage` or `GARAGE_DIR`).
-
-### Garage vs other object storage
-
-DeployWerk only needs an **S3-compatible endpoint** (path-style is fine). Alternatives to self-hosted Garage include **MinIO** (already used in repo `docker-compose` for local dev), **AWS S3**, **Cloudflare R2**, or any provider with an access key and bucket. Point DeployWerk’s storage settings at that endpoint instead of Garage if you prefer not to run Garage at all.
+If you self-host **Garage**, see its logs and `garage.toml`: `rpc_secret` must be **64 hex characters**; `[s3_web]` needs `root_domain` on current Garage versions. DeployWerk only needs **S3-compatible** storage — **MinIO**, cloud object storage, etc. are fine.
 
 ### Port conflicts
 
-If **9292** is in use by **systemd** (Cockpit socket activation), the installer treats that as expected and continues with a warning. For a different process on 9292, set `COCKPIT_PORT` to another free port before running the installer.
-
-If the installer aborts on a port conflict, identify the owner:
+Identify listeners:
 
 ```bash
-sudo ss -ltnp | grep -E ':80 |:443 |:8053 |:8080 |:9292 |:18080 |:3900 |:3902 |:3903 '
-sudo ss -lunp | grep -E ':8053 '
+sudo ss -ltnp | grep -E ':80 |:443 |:8080 |:8085 '
 docker ps --format 'table {{.Names}}\t{{.Ports}}'
 ```
 
-The most common conflict is keeping native `deploywerk-api` on `127.0.0.1:8080` while also trying to bind Traefik’s local dashboard to the same port. The installer uses `127.0.0.1:18080` for the Traefik dashboard to avoid that.
-
-Technitium DNS is published on **8053/tcp+udp** by default so it does not fight with typical host DNS listeners on **53** (for example `systemd-resolved` and libvirt `dnsmasq`). Clients must query **8053** unless you add your own forwarding from **53** to **8053**.
-
-If you intentionally want Technitium on standard **53**, set `ENABLE_STANDARD_DNS_PORT_53=true` before running the installer (you will likely need to free or reconfigure host DNS services first).
+Only one service should bind **80/443** on a given IP unless you use distinct addresses or ports.
 
 ## Optional: remote desktop / Hestia
 
