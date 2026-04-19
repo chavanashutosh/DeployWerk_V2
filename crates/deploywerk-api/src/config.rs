@@ -461,8 +461,10 @@ impl Config {
                 .ok()
                 .and_then(|p| p.parse().ok())
                 .unwrap_or(8080),
-            seed_demo_users: seed_demo_users && !is_production,
-            demo_logins_public: demo_logins_public && !is_production,
+            // When unset, defaults above keep demos off in production; explicit SEED_DEMO_USERS / DEMO_LOGINS_PUBLIC
+            // may be enabled in production (sensitive — demo accounts and public passwords on bootstrap).
+            seed_demo_users,
+            demo_logins_public,
             stripe_webhook_secret,
             adyen_hmac_key_hex,
             cdn_purge_webhook_url,

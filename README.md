@@ -79,7 +79,9 @@ cd web && npm install && npm run dev
 | http://127.0.0.1:5173 | Vite UI (native default) or nginx front (`--docker`) |
 | http://127.0.0.1:8080 | API |
 | http://127.0.0.1:19000 / 19001 | MinIO S3 API / console on host |
-| 5432 | Postgres on host |
+| 15433 (default) | DeployWerk Postgres on host (`DEPLOYWERK_POSTGRES_HOST_PORT` in Compose; avoids 5432 / other stacks) |
+
+For **host** API + Vite, set `DATABASE_URL` in repo-root `.env` to `127.0.0.1` and the **same port** Compose publishes (default **15433**). Inside Compose, the `api` service still connects to **`postgres:5432`**. For production with [scripts/deploywerk-caddy.sh](scripts/deploywerk-caddy.sh), mirror that port in `/etc/deploywerk/deploywerk.env`.
 
 **Windows (PowerShell) without bash:** `docker compose up -d postgres minio minio-init` then start API and Vite as above.
 
@@ -99,7 +101,7 @@ cd web && npm install && npm run dev
 
 ### Migrations and demo data
 
-Migrations run when the API starts. Demo users load when `SEED_DEMO_USERS=true` and `APP_ENV` is not `production`. Demo passwords on the login page come from `GET /api/v1/bootstrap` when `DEMO_LOGINS_PUBLIC=true` (non-production only).
+Migrations run when the API starts. By default, demo users load when `SEED_DEMO_USERS=true` and `APP_ENV` is not `production`. You can set `SEED_DEMO_USERS=true` (and optionally `DEMO_LOGINS_PUBLIC=true`) explicitly to enable demo seeding or public demo passwords on bootstrap in **any** `APP_ENV` — avoid that on public production unless you intend it. Demo passwords on the login page come from `GET /api/v1/bootstrap` when `DEMO_LOGINS_PUBLIC=true`.
 
 ---
 
@@ -124,6 +126,8 @@ Logs: `docker compose --profile authentik logs -f authentik-server authentik-wor
 For a **numbered checklist** (Postgres, env file, builds, systemd, nginx, TLS options, verification), use [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
 
 Typical path on **Debian 13 (trixie)** or compatible: **PostgreSQL** on the host, **deploywerk-api** under **systemd**, **nginx** on a **loopback** port when Traefik fronts TLS, static SPA under `/var/www/deploywerk`.
+
+**Caddy (or similar) in front:** Obtain **Let’s Encrypt** certificates on the **edge** (for example Caddy’s automatic HTTPS or DNS-01). The app stack listens on **loopback HTTP** only; use [scripts/deploywerk-caddy.sh](scripts/deploywerk-caddy.sh) to run **deploywerk-api** plus a dedicated loopback **nginx** (`start` / `stop` / `status`; optional `run` for foreground debugging). Point your site block at that loopback port (see `caddy-snippet`).
 
 ### Packages and toolchain
 
@@ -151,7 +155,9 @@ Place your clone at `/opt/deploywerk` and `chown -R deploywerk:deploywerk /opt/d
 
 ### Database
 
-Create PostgreSQL user and database `deploywerk` (Debian: `sudo -u postgres createuser`, `createdb`, `psql` …).
+**Option A — Native PostgreSQL:** create user and database `deploywerk` (Debian: `sudo -u postgres createuser`, `createdb`, `psql` …). Use `DATABASE_URL` with port **5432**.
+
+**Option B — Dedicated Postgres in Docker** (from repo [docker-compose.yml](docker-compose.yml)): `docker compose up -d postgres` publishes **`127.0.0.1:${DEPLOYWERK_POSTGRES_HOST_PORT:-15433}`** (default **15433**) so it does not conflict with host PostgreSQL or another container. Set `DATABASE_URL` to that host port; credentials default to `deploywerk`/`deploywerk` as in Compose unless you change them.
 
 ### Environment file
 
@@ -160,6 +166,7 @@ Create `/etc/deploywerk/deploywerk.env` (`chmod 600`). Minimal:
 ```bash
 APP_ENV=production
 DATABASE_URL=postgresql://deploywerk:PASSWORD@127.0.0.1:5432/deploywerk
+# Docker Compose postgres (default host port 15433): use ...@127.0.0.1:15433/... instead.
 JWT_SECRET=...                    # openssl rand -base64 48
 SERVER_KEY_ENCRYPTION_KEY=...     # openssl rand -hex 32
 HOST=127.0.0.1

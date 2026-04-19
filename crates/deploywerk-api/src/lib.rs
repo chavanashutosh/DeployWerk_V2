@@ -317,8 +317,8 @@ pub async fn run() -> anyhow::Result<()> {
         .with_state(state);
 
     let addr = format!("{}:{}", config.host, config.port);
-    tracing::info!("listening on http://{}", addr);
     let listener = tokio::net::TcpListener::bind(&addr).await?;
+    tracing::info!("listening on http://{}", addr);
     axum::serve(listener, app).await?;
 
     Ok(())

@@ -69,6 +69,8 @@ sudo chown -R deploywerk:deploywerk /opt/deploywerk
 
 ## Step 2 — PostgreSQL
 
+### Option A — Native PostgreSQL on the host
+
 Create a dedicated role and database (replace `STRONG_PASSWORD`):
 
 ```bash
@@ -81,6 +83,22 @@ Example `DATABASE_URL` for the env file:
 ```text
 postgresql://deploywerk:STRONG_PASSWORD@127.0.0.1:5432/deploywerk
 ```
+
+### Option B — Dedicated Postgres in Docker (from this repo)
+
+Use this when you want an isolated Postgres container and to avoid host port clashes with another PostgreSQL or stacks (for example a different container already using **15432** on the host). From the repo root:
+
+```bash
+docker compose up -d postgres
+```
+
+By default, [docker-compose.yml](../docker-compose.yml) publishes **`${DEPLOYWERK_POSTGRES_HOST_PORT:-15433}:5432`**. Point **`DATABASE_URL`** at that **host** port (credentials default to `deploywerk` / `deploywerk` unless you change `POSTGRES_*` in Compose):
+
+```text
+postgresql://deploywerk:deploywerk@127.0.0.1:15433/deploywerk
+```
+
+If **15433** is taken, set `DEPLOYWERK_POSTGRES_HOST_PORT` (e.g. in `.env`) and use the same port in `DATABASE_URL`. Processes **inside** Compose still use hostname `postgres` and port **5432**; only the host API and `/etc/deploywerk/deploywerk.env` use `127.0.0.1` and the published port.
 
 ---
 
@@ -105,6 +123,7 @@ PORT=8080
 RUST_LOG=deploywerk_api=info,tower_http=info,sqlx=warn
 
 DATABASE_URL=postgresql://deploywerk:STRONG_PASSWORD@127.0.0.1:5432/deploywerk
+# If using Docker Compose postgres (Step 2 option B), use 127.0.0.1:15433 and matching credentials.
 DATABASE_MAX_CONNECTIONS=20
 
 JWT_SECRET=REPLACE_WITH_openssl_rand_-base64_48
@@ -226,6 +245,8 @@ If using the worker: `sudo systemctl enable --now deploywerk-deploy-worker`.
 ---
 
 ## Step 7 — nginx (loopback SPA + `/api`)
+
+**Alternative without a system nginx site:** From the repo, [scripts/deploywerk-caddy.sh](../scripts/deploywerk-caddy.sh) runs **deploywerk-api** and a dedicated nginx on loopback (`sudo bash scripts/deploywerk-caddy.sh start` — state and PID files under `DEPLOYWERK_STATE_DIR`, default `/var/lib/deploywerk/run`). Use **`stop`** / **`status`** / **`restart`** as needed; **`run`** keeps nginx in the foreground for debugging. Point **Caddy** (or another edge) at that HTTP port; issue **Let’s Encrypt** certificates on the edge, not inside this script. **`caddy-snippet`** prints a minimal `reverse_proxy` block.
 
 Pick a **loopback** port for nginx (examples use **8085**; your edge proxy must match). Create `/etc/nginx/sites-available/deploywerk.conf`:
 
