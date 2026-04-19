@@ -2,7 +2,7 @@
 
 Rust **API** (`deploywerk-api`), **CLI** (`deploywerk-cli`), and **Vite + React** web UI. Teams, projects, environments, Docker applications, deploy jobs (SSH or platform Docker), optional Git webhooks, optional OIDC (e.g. Authentik).
 
-**This file is the only operator documentation in the repository.** Older spec/status markdown was removed; use `git log` / history if you need prior `docs/` content.
+**This file is the primary operator documentation.** Older spec/status markdown was removed; use `git log` / history if you need prior `docs/` content. **Step-by-step server install:** [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
 
 **Canonical source:** https://github.com/chavanashutosh/DeployWerk_V2
 
@@ -120,6 +120,8 @@ Logs: `docker compose --profile authentik logs -f authentik-server authentik-wor
 ---
 
 ## Production: native API + nginx + systemd (Debian 13)
+
+For a **numbered checklist** (Postgres, env file, builds, systemd, nginx, TLS options, verification), use [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
 
 Typical path on **Debian 13 (trixie)** or compatible: **PostgreSQL** on the host, **deploywerk-api** under **systemd**, **nginx** on a **loopback** port when Traefik fronts TLS, static SPA under `/var/www/deploywerk`.
 
