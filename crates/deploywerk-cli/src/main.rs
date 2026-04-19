@@ -3,7 +3,6 @@ use std::io::Write;
 use std::path::PathBuf;
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
-use serde::Serialize;
 use tabwriter::TabWriter;
 use directories::ProjectDirs;
 use serde::{Deserialize, Serialize};
