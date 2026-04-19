@@ -100,6 +100,10 @@ postgresql://deploywerk:deploywerk@127.0.0.1:15433/deploywerk
 
 If **15433** is taken, set `DEPLOYWERK_POSTGRES_HOST_PORT` (e.g. in `.env`) and use the same port in `DATABASE_URL`. Processes **inside** Compose still use hostname `postgres` and port **5432**; only the host API and `/etc/deploywerk/deploywerk.env` use `127.0.0.1` and the published port.
 
+### deploywerk-caddy.sh (no interactive database prompts)
+
+[scripts/deploywerk-caddy.sh](../scripts/deploywerk-caddy.sh) does **not** prompt for Postgres unless you pass **`--prompt-db`**. If **`DATABASE_URL`** is unset in `/etc/deploywerk/deploywerk.env`, the script builds it from **`DEPLOYWERK_PG_USER`**, **`DEPLOYWERK_PG_PASSWORD`**, **`DEPLOYWERK_PG_HOST`**, **`DEPLOYWERK_POSTGRES_HOST_PORT`**, and **`DEPLOYWERK_PG_DATABASE`** (defaults match [docker-compose.yml](../docker-compose.yml)). Use **`--compose-postgres`** on **`start`**, **`restart`**, **`run`**, or **`redeploy`** to run `docker compose up -d postgres` from **`--workdir`** first. Optional **`psql`** checks retry for **`DEPLOYWERK_PSQL_VERIFY_TIMEOUT_SECS`** (default 90); set **`DEPLOYWERK_SKIP_PSQL_VERIFY=1`** to skip.
+
 ---
 
 ## Step 3 — Environment file

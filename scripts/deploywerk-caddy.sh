@@ -24,10 +24,10 @@
 # For production hardening, use a dedicated deploywerk user, chown /opt/deploywerk and state paths, and run the
 # API under systemd with User=deploywerk — no change to this script is required to adopt that model.
 #
-# Database URL (see .env.example): repo docker compose publishes Postgres on host port
-#   DEPLOYWERK_POSTGRES_HOST_PORT (default 15433), e.g.
-#   DATABASE_URL=postgresql://deploywerk:deploywerk@127.0.0.1:15433/deploywerk
-#   Native PostgreSQL on the host usually uses 127.0.0.1:5432. Match DATABASE_URL to the port you use.
+# Database URL (see .env.example): if DATABASE_URL is omitted in --env-file, the script builds it from
+#   DEPLOYWERK_PG_USER, DEPLOYWERK_PG_PASSWORD, DEPLOYWERK_PG_HOST, DEPLOYWERK_POSTGRES_HOST_PORT (default 15433),
+#   DEPLOYWERK_PG_DATABASE (same defaults as docker-compose postgres service). You can also set DATABASE_URL
+#   explicitly. Use --compose-postgres to run "docker compose up -d postgres" from --workdir before start.
 #
 # Demo seeding / sample data (optional, in --env-file): SEED_DEMO_USERS=true creates demo org/team/project
 #   (slugs demo, sample), apps hello/api, and RBAC sample users. DEMO_LOGINS_PUBLIC=true lists passwords on the
@@ -49,9 +49,11 @@ Commands:  start | stop | clean | restart | redeploy | status | run | caddy-snip
 
 start (background):
   1) Source --env-file (default /etc/deploywerk/deploywerk.env).
-  2) Optionally (--prompt-db) set DATABASE_URL for this run only.
-  3) Start deploywerk-api in the background; wait until /api/v1/health responds on the API port (migrations may delay this).
-  4) Start nginx (daemon on); wait until the same path works via loopback HTTP_PORT; write PID files under DEPLOYWERK_STATE_DIR.
+  2) If DATABASE_URL is unset, apply docker-compose-style defaults (DEPLOYWERK_PG_* / DEPLOYWERK_POSTGRES_HOST_PORT).
+  3) Optionally (--compose-postgres) run docker compose up -d postgres in --workdir.
+  4) Optionally (--prompt-db) interactive DATABASE_URL for this run only (overrides defaults).
+  5) Start deploywerk-api in the background; wait until /api/v1/health responds on the API port (migrations may delay this).
+  6) Start nginx (daemon on); wait until the same path works via loopback HTTP_PORT; write PID files under DEPLOYWERK_STATE_DIR.
 
 stop:  Stop nginx then API using saved PIDs; remove state files.
 
@@ -65,7 +67,8 @@ restart:  stop then start (passes through run flags).
 redeploy:  stop (ok if already stopped), optional "cargo clean", "cargo build --release" for deploywerk-api,
   optional "npm ci && npm run build" in web/ and copy dist/ to --web-root, then start.
   Example:  sudo bash scripts/deploywerk-caddy.sh redeploy --clean --build-web --http-port 3001 --api-port 8080
-  Example (interactive DATABASE_URL, not written to disk):  ... redeploy --prompt-db --build-web ...
+  Example (interactive DATABASE_URL):  ... redeploy --prompt-db --build-web ...
+  Example (no DB prompts; Compose Postgres + build):  ... redeploy --compose-postgres --build-web ...
   After build, the started API binary is workdir/target/release/deploywerk-api (see DEPLOYWERK_API_BIN).
 
 status:  Show whether API and nginx processes from state files are alive.
@@ -82,7 +85,8 @@ Shared flags:
   --proto STR        X-Forwarded-Proto to API (default https)
   --bind ADDR        nginx listen IP (default 127.0.0.1)
   --extra-listen A   extra nginx listen IP (e.g. 172.17.0.1 for Docker→host)
-  --prompt-db        Prompt for Postgres (overrides DATABASE_URL for this process tree)
+  --prompt-db        Prompt for Postgres (overrides DATABASE_URL for this run; optional if defaults/env suffice)
+  --compose-postgres Run "docker compose up -d postgres" in --workdir (needs docker-compose.yml)
 
 clean-only flags:
   --remove-tmp-nginx  Remove top-level ${TMPDIR:-/tmp}/deploywerk-nginx.* directories (this script's mktemp prefix only)
@@ -96,12 +100,15 @@ Env: DEPLOYWERK_STATE_DIR (default /var/lib/deploywerk/run), DEPLOYWERK_API_BIN,
      DEPLOYWERK_PG_PROMPT_USER — default DB user shown for --prompt-db (default orbytals).
      DEPLOYWERK_CARGO / DEPLOYWERK_NPM — full paths if cargo/npm not on PATH (common with sudo).
      DEPLOYWERK_SKIP_PSQL_VERIFY=1 — skip optional psql check before starting the API.
+     DEPLOYWERK_PSQL_VERIFY_TIMEOUT_SECS — max seconds to retry psql (default 90; Postgres container may be slow).
+     DEPLOYWERK_PG_USER / DEPLOYWERK_PG_PASSWORD / DEPLOYWERK_PG_HOST / DEPLOYWERK_PG_DATABASE — used when DATABASE_URL is unset.
      DEPLOYWERK_SKIP_PORT_CHECK=1 — skip \"port already in use\" preflight (not recommended).
      DEPLOYWERK_HEALTH_WAIT_SECS — max seconds to wait for /api/v1/health after API and after nginx (default 120).
      DEPLOYWERK_SKIP_HEALTH_WAIT=1 — skip those checks (not recommended; risk of 502 until migrations finish).
 
-Database / Docker Postgres: DEPLOYWERK_POSTGRES_HOST_PORT (default 15433) must match DATABASE_URL in --env-file
-  when using repo docker compose postgres (host uses 127.0.0.1:that_port; native install often uses 5432).
+Database / Docker Postgres: if DATABASE_URL is set in --env-file, it wins. Otherwise it is built from
+  DEPLOYWERK_PG_* and DEPLOYWERK_POSTGRES_HOST_PORT (default 15433). Use --compose-postgres to start the
+  container from docker-compose.yml in --workdir.
 
 Demo data (env file): SEED_DEMO_USERS=true seeds demo org/team/project and users; DEMO_LOGINS_PUBLIC=true
   exposes demo passwords on the login page (avoid on public production). Sample logins after seed:
@@ -135,6 +142,7 @@ PG_PROMPT_USER="${DEPLOYWERK_PG_PROMPT_USER:-orbytals}"
 REDEPLOY_CLEAN=0
 REDEPLOY_BUILD_WEB=0
 CLEAN_REMOVE_TMP_NGINX=0
+COMPOSE_POSTGRES=0
 
 resolve_workdir() {
   [[ -n "$WORKDIR" ]] && { echo "$WORKDIR"; return; }
@@ -215,6 +223,39 @@ urlencode_component() {
   echo "$1"
 }
 
+# When DATABASE_URL is unset after sourcing --env-file, build from docker-compose-compatible defaults (see .env.example).
+apply_default_database_url_if_unset() {
+  local u p h port db eu ep
+  [[ -z "${DATABASE_URL:-}" ]] || return 0
+  u="${DEPLOYWERK_PG_USER:-deploywerk}"
+  p="${DEPLOYWERK_PG_PASSWORD:-deploywerk}"
+  h="${DEPLOYWERK_PG_HOST:-127.0.0.1}"
+  port="${DEPLOYWERK_POSTGRES_HOST_PORT:-15433}"
+  db="${DEPLOYWERK_PG_DATABASE:-deploywerk}"
+  eu="$(urlencode_component "$u")"
+  ep="$(urlencode_component "$p")"
+  export DATABASE_URL="postgresql://${eu}:${ep}@${h}:${port}/${db}"
+  echo "DATABASE_URL was unset; using DEPLOYWERK_PG_* / DEPLOYWERK_POSTGRES_HOST_PORT (user=${u} host=${h} port=${port} db=${db}). Set DATABASE_URL in ${ENV_FILE} to override." >&2
+}
+
+compose_up_postgres() {
+  local wd="$1"
+  [[ -f "$wd/docker-compose.yml" ]] || die "docker-compose.yml not found in $wd (--compose-postgres needs the repo compose file)"
+  command -v docker >/dev/null 2>&1 || die "docker not in PATH (install Docker or omit --compose-postgres)"
+  if ! docker compose version >/dev/null 2>&1; then
+    die "docker compose plugin not available (install Docker Compose v2 or omit --compose-postgres)"
+  fi
+  echo "Starting Postgres: docker compose up -d postgres (in $wd)" >&2
+  ( cd "$wd" && docker compose up -d postgres ) || die "docker compose up -d postgres failed"
+}
+
+maybe_compose_up_postgres() {
+  local wd
+  [[ "$COMPOSE_POSTGRES" -eq 1 ]] || return 0
+  wd="$(resolve_workdir)"
+  compose_up_postgres "$wd"
+}
+
 verify_database_url() {
   [[ "${DEPLOYWERK_SKIP_PSQL_VERIFY:-}" == "1" ]] && return 0
   [[ -n "${DATABASE_URL:-}" ]] || return 0
@@ -222,13 +263,28 @@ verify_database_url() {
     echo "Tip: install \`postgresql-client\` (\`psql\`) to verify DATABASE_URL before starting the API." >&2
     return 0
   }
-  echo "Verifying DATABASE_URL with psql..." >&2
-  if psql "$DATABASE_URL" -c 'select 1' >/dev/null 2>&1; then
-    echo "Postgres connection OK." >&2
-    return 0
-  fi
-  echo "psql could not connect: wrong password, wrong user, or database does not allow this login." >&2
-  echo "  Your Postgres role must exist and the password must match (e.g. Docker Postgres often uses user \`deploywerk\`, not \`orbytals\`)." >&2
+  local max_secs elapsed start
+  max_secs="${DEPLOYWERK_PSQL_VERIFY_TIMEOUT_SECS:-90}"
+  start="$(date +%s)"
+  elapsed=0
+  echo "Verifying DATABASE_URL with psql (timeout ${max_secs}s)..." >&2
+  while true; do
+    if psql "$DATABASE_URL" -c 'select 1' >/dev/null 2>&1; then
+      echo "Postgres connection OK." >&2
+      return 0
+    fi
+    elapsed=$(( $(date +%s) - start ))
+    if [[ "$elapsed" -ge "$max_secs" ]]; then
+      break
+    fi
+    if (( elapsed > 0 && elapsed % 15 == 0 )); then
+      echo "  still waiting for Postgres (${elapsed}s / ${max_secs}s)..." >&2
+    fi
+    sleep 2
+  done
+  echo "psql could not connect within ${max_secs}s: wrong password, wrong user, database not ready, or role missing." >&2
+  echo "  Your Postgres role must exist and the password must match (e.g. Docker Postgres often uses user \`deploywerk\`)." >&2
+  echo "  Try:  docker compose up -d postgres   or   --compose-postgres on start|redeploy" >&2
   echo "  Test:  psql \"\$DATABASE_URL\" -c 'select 1'" >&2
   echo "  As superuser:  sudo -u postgres psql -c \"\\du\"   # list roles" >&2
   die "DATABASE_URL verification failed"
@@ -582,6 +638,9 @@ cmd_start() {
   source "$env_path" || die "failed to source env file"
   set +a
 
+  apply_default_database_url_if_unset
+  maybe_compose_up_postgres
+
   if [[ "$PROMPT_DB" -eq 1 ]]; then
     prompt_database_url
   fi
@@ -756,6 +815,9 @@ cmd_run() {
   source "$env_path" || die "failed to source env file"
   set +a
 
+  apply_default_database_url_if_unset
+  maybe_compose_up_postgres
+
   if [[ "$PROMPT_DB" -eq 1 ]]; then
     prompt_database_url
   fi
@@ -809,6 +871,7 @@ EOF
 
 parse_run_flags() {
   CLEAN_REMOVE_TMP_NGINX=0
+  COMPOSE_POSTGRES=0
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --api-port) API_PORT="${2:-}"; shift 2 || die "--api-port value" ;;
@@ -821,6 +884,7 @@ parse_run_flags() {
       --extra-listen) EXTRA_LISTENS+=("${2:-}"); shift 2 || die "--extra-listen address" ;;
       --state-dir) STATE_DIR="${2:-}"; shift 2 || die "--state-dir path" ;;
       --prompt-db) PROMPT_DB=1; shift ;;
+      --compose-postgres) COMPOSE_POSTGRES=1; shift ;;
       --remove-tmp-nginx) CLEAN_REMOVE_TMP_NGINX=1; shift ;;
       -h|--help) usage; exit 0 ;;
       *) die "unknown flag: $1" ;;
@@ -832,6 +896,7 @@ parse_redeploy_flags() {
   REDEPLOY_CLEAN=0
   REDEPLOY_BUILD_WEB=0
   PROMPT_DB=0
+  COMPOSE_POSTGRES=0
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --api-port) API_PORT="${2:-}"; shift 2 || die "--api-port value" ;;
@@ -844,6 +909,7 @@ parse_redeploy_flags() {
       --extra-listen) EXTRA_LISTENS+=("${2:-}"); shift 2 || die "--extra-listen address" ;;
       --state-dir) STATE_DIR="${2:-}"; shift 2 || die "--state-dir path" ;;
       --prompt-db) PROMPT_DB=1; shift ;;
+      --compose-postgres) COMPOSE_POSTGRES=1; shift ;;
       --clean) REDEPLOY_CLEAN=1; shift ;;
       --build-web) REDEPLOY_BUILD_WEB=1; shift ;;
       -h|--help) usage; exit 0 ;;
@@ -856,6 +922,10 @@ cmd_redeploy() {
   local workdir api_built cargo_bin npm_bin
   workdir="$(resolve_workdir)"
   [[ -f "$workdir/Cargo.toml" ]] || die "no Cargo.toml in workdir: $workdir"
+
+  if [[ "$COMPOSE_POSTGRES" -eq 1 ]]; then
+    compose_up_postgres "$workdir"
+  fi
 
   cmd_stop || true
   sleep 0.5

@@ -159,6 +159,8 @@ Place your clone at `/opt/deploywerk` and `chown -R deploywerk:deploywerk /opt/d
 
 **Option B — Dedicated Postgres in Docker** (from repo [docker-compose.yml](docker-compose.yml)): `docker compose up -d postgres` publishes **`127.0.0.1:${DEPLOYWERK_POSTGRES_HOST_PORT:-15433}`** (default **15433**) so it does not conflict with host PostgreSQL or another container. Set `DATABASE_URL` to that host port; credentials default to `deploywerk`/`deploywerk` as in Compose unless you change them.
 
+**Non-interactive host deploy with [scripts/deploywerk-caddy.sh](scripts/deploywerk-caddy.sh):** you do not need `--prompt-db`. Omit `DATABASE_URL` from `/etc/deploywerk/deploywerk.env` if you keep **`DEPLOYWERK_PG_*`** and **`DEPLOYWERK_POSTGRES_HOST_PORT`** aligned with Compose (see [.env.example](.env.example)); the script composes `DATABASE_URL` automatically. Use **`--compose-postgres`** so it runs `docker compose up -d postgres` from `/opt/deploywerk` before `start`, or start Postgres yourself first. Example: `sudo bash scripts/deploywerk-caddy.sh redeploy --compose-postgres --build-web --http-port 3001 --api-port 8080`. `psql` verification retries for up to **`DEPLOYWERK_PSQL_VERIFY_TIMEOUT_SECS`** (default 90s) while the container becomes ready.
+
 ### Environment file
 
 Create `/etc/deploywerk/deploywerk.env` (`chmod 600`). Minimal:
