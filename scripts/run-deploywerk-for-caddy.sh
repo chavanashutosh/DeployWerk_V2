@@ -10,8 +10,8 @@
 #   sudo bash scripts/run-deploywerk-for-caddy.sh run [--api-port 8080] [--http-port 3001] \
 #       [--env-file /etc/deploywerk/deploywerk.env] [--web-root /var/www/deploywerk]
 #
-#   sudo bash scripts/run-deploywerk-for-caddy.sh run --prompt-db
-#       # Asks for Postgres host/port/db/user/password and sets DATABASE_URL for this run only.
+#   sudo bash scripts/run-deploywerk-for-caddy.sh run --prompt-db --http-port 3001 --api-port 8080
+#       # Prompts for Postgres credentials; overrides DATABASE_URL for this run only (fix env file for production).
 #
 #   bash scripts/run-deploywerk-for-caddy.sh caddy-snippet [--domain deploywerk.orbytals.com] [--http-port 3001]
 
@@ -36,7 +36,7 @@ run flags:
   --api-port N       API (default 8080)
   --http-port N      nginx loopback (default 3001)
   --env-file PATH
-  --web-root PATH    SPA root (default /var/www/deploywerk)
+  --web-root PATH    SPA root (default /var/www/deploywerk; must contain index.html)
   --workdir PATH     cd before API (default /opt/deploywerk if present, else repo root)
   --proto STR        X-Forwarded-Proto to API (default https)
   --bind ADDR        nginx listen IP (default 127.0.0.1)
@@ -186,6 +186,7 @@ cmd_run() {
 
   [[ -f "$env_path" ]] || die "env file not found: $env_path"
   [[ -d "$WEB_ROOT" ]] || die "web root not found: $WEB_ROOT"
+  [[ -f "$WEB_ROOT/index.html" ]] || die "missing $WEB_ROOT/index.html (nginx needs the built SPA). Example: cd \"$workdir/web\" && npm ci && npm run build && sudo mkdir -p \"$WEB_ROOT\" && sudo cp -r dist/. \"$WEB_ROOT/\""
   [[ -d "$workdir" ]] || die "workdir not found: $workdir"
 
   prefix="$(mktemp -d "${TMPDIR:-/tmp}/deploywerk-nginx.XXXXXX")"
@@ -210,7 +211,14 @@ cmd_run() {
   ( cd "$workdir" && exec "$api_bin" ) &
   API_PID=$!
   sleep 0.3
-  kill -0 "$API_PID" 2>/dev/null || die "deploywerk-api exited immediately (check DATABASE_URL and logs above)"
+  if ! kill -0 "$API_PID" 2>/dev/null; then
+    echo "" >&2
+    echo "deploywerk-api exited immediately. Common cause: PostgreSQL rejected DATABASE_URL (wrong password or user)." >&2
+    echo "  1) Test:  psql \"\$DATABASE_URL\" -c 'select 1'   (same shell: re-source $env_path or export DATABASE_URL)" >&2
+    echo "  2) Fix password in Postgres to match the env file, or update DATABASE_URL (URL-encode special chars in the password)." >&2
+    echo "  3) One-run override: add --prompt-db to this command (same --http-port / --api-port)." >&2
+    die "deploywerk-api failed to stay running"
+  fi
 
   # --- Start nginx (static SPA + /api reverse proxy to the API) ---
   echo "Starting nginx: prefix=$prefix listen ${HTTP_BIND}:${HTTP_PORT} (+extras) → API 127.0.0.1:${API_PORT}"
