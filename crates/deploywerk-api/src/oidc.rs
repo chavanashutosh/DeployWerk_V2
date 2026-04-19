@@ -13,7 +13,7 @@ use openidconnect::{
     TokenResponse,
 };
 use serde::{Deserialize, Serialize};
-use sqlx::PgPool;
+use crate::DbPool;
 use uuid::Uuid;
 
 use crate::auth::issue_token;
@@ -154,7 +154,10 @@ async fn oidc_callback(
     let token_jwt = issue_token(user_id, &state.jwt_secret)?;
 
     let pref: Option<(Option<Uuid>, Option<Uuid>, serde_json::Value)> = sqlx::query_as(
-        "SELECT current_team_id, current_organization_id, COALESCE(settings_json, '{}'::jsonb) FROM user_preferences WHERE user_id = $1",
+        &format!(
+            "SELECT current_team_id, current_organization_id, {} FROM user_preferences WHERE user_id = $1",
+            crate::sql_compat::coalesce_user_prefs_settings_json()
+        ),
     )
     .bind(user_id)
     .fetch_optional(&state.pool)
@@ -196,7 +199,7 @@ async fn oidc_callback(
 }
 
 async fn jit_oidc_user(
-    pool: &PgPool,
+    pool: &DbPool,
     oidc: &OidcConfigState,
     claims: &CoreIdTokenClaims,
 ) -> Result<Uuid, ApiError> {
@@ -281,9 +284,7 @@ async fn jit_oidc_user(
     .await
     .map_err(|_| ApiError::Internal)?;
 
-    sqlx::query(
-        "INSERT INTO user_preferences (user_id, settings_json) VALUES ($1, '{}'::jsonb) ON CONFLICT (user_id) DO NOTHING",
-    )
+    sqlx::query(crate::sql_compat::insert_user_prefs_empty_settings())
     .bind(id)
     .execute(&mut *tx)
     .await

@@ -101,6 +101,8 @@ For **host** API + Vite, set `DATABASE_URL` in repo-root `.env` to `127.0.0.1` a
 
 ### Migrations and demo data
 
+The API supports **SQLite** (default Cargo features: file DB under `./data/deploywerk.db`) or **PostgreSQL** (`cargo build -p deploywerk-api --no-default-features --features postgres`). Docker images use PostgreSQL via [docker/Dockerfile.api](docker/Dockerfile.api). Schema lives in [crates/deploywerk-api/migrations_sqlite/](crates/deploywerk-api/migrations_sqlite/) vs [crates/deploywerk-api/migrations/](crates/deploywerk-api/migrations/).
+
 Migrations run when the API starts. By default, demo users load when `SEED_DEMO_USERS=true` and `APP_ENV` is not `production`. You can set `SEED_DEMO_USERS=true` (and optionally `DEMO_LOGINS_PUBLIC=true`) explicitly to enable demo seeding or public demo passwords on bootstrap in **any** `APP_ENV` — avoid that on public production unless you intend it. Demo passwords on the login page come from `GET /api/v1/bootstrap` when `DEMO_LOGINS_PUBLIC=true`.
 
 ---
@@ -128,6 +130,8 @@ For a **numbered checklist** (Postgres, env file, builds, systemd, nginx, TLS op
 Typical path on **Debian 13 (trixie)** or compatible: **PostgreSQL** on the host, **deploywerk-api** under **systemd**, **nginx** on a **loopback** port when Traefik fronts TLS, static SPA under `/var/www/deploywerk`.
 
 **Caddy (or similar) in front:** Obtain **Let’s Encrypt** certificates on the **edge** (for example Caddy’s automatic HTTPS or DNS-01). The app stack listens on **loopback HTTP** only; use [scripts/deploywerk-caddy.sh](scripts/deploywerk-caddy.sh) to run **deploywerk-api** plus a dedicated loopback **nginx** (`start` / `stop` / `status`; optional `run` for foreground debugging). Point your site block at that loopback port (see `caddy-snippet`).
+
+- **API logs:** stdout/stderr from `deploywerk-api` are appended to **`${DEPLOYWERK_API_LOG:-$DEPLOYWERK_STATE_DIR/deploywerk-api.log}`** (default under `/var/lib/deploywerk/run`). If you see **502** or an empty HTTP reply, inspect that file and ensure **`DATABASE_URL` has no raw `#` in the password** (encode as **`%23`** or change the password), since the Rust API uses strict URL parsing.
 
 ### Packages and toolchain
 

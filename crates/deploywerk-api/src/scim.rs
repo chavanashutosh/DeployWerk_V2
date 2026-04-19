@@ -11,7 +11,7 @@ use chrono::Utc;
 use deploywerk_core::{AppRole, TeamRole};
 use serde::Deserialize;
 use serde_json::{json, Value};
-use sqlx::PgPool;
+use crate::DbPool;
 use subtle::ConstantTimeEq;
 use uuid::Uuid;
 
@@ -221,7 +221,7 @@ fn scim_display_name(v: &Value) -> Option<String> {
 }
 
 async fn upsert_user_from_scim(
-    pool: &PgPool,
+    pool: &DbPool,
     idp_issuer: &str,
     body: &Value,
     fixed_id: Option<Uuid>,
@@ -256,7 +256,7 @@ async fn upsert_user_from_scim(
             .await
             .map_err(|_| ApiError::Internal)?;
             sqlx::query(
-                "INSERT INTO user_preferences (user_id, settings_json) VALUES ($1, '{}'::jsonb) ON CONFLICT (user_id) DO NOTHING",
+                crate::sql_compat::insert_user_prefs_empty_settings(),
             )
             .bind(id)
             .execute(pool)
@@ -335,7 +335,7 @@ async fn upsert_user_from_scim(
     .await
     .map_err(|_| ApiError::Internal)?;
     sqlx::query(
-        "INSERT INTO user_preferences (user_id, settings_json) VALUES ($1, '{}'::jsonb) ON CONFLICT (user_id) DO NOTHING",
+        crate::sql_compat::insert_user_prefs_empty_settings(),
     )
     .bind(id)
     .execute(&mut *tx)
@@ -488,7 +488,7 @@ fn parse_group_display_name(s: &str) -> Option<GroupBinding> {
 }
 
 async fn apply_group_membership(
-    pool: &PgPool,
+    pool: &DbPool,
     user_id: Uuid,
     display_name: &str,
     add: bool,
@@ -586,7 +586,7 @@ fn group_resource(id: Uuid, display_name: &str, members: Vec<Value>) -> Value {
     })
 }
 
-async fn load_group_display_name(pool: &PgPool, id: Uuid) -> Result<String, ApiError> {
+async fn load_group_display_name(pool: &DbPool, id: Uuid) -> Result<String, ApiError> {
     let name: Option<String> = sqlx::query_scalar("SELECT display_name FROM scim_groups WHERE id = $1")
         .bind(id)
         .fetch_optional(pool)
@@ -595,7 +595,7 @@ async fn load_group_display_name(pool: &PgPool, id: Uuid) -> Result<String, ApiE
     name.ok_or(ApiError::NotFound)
 }
 
-async fn list_group_members(pool: &PgPool, group_id: Uuid) -> Result<Vec<Value>, ApiError> {
+async fn list_group_members(pool: &DbPool, group_id: Uuid) -> Result<Vec<Value>, ApiError> {
     let display_name = load_group_display_name(pool, group_id).await?;
     let Some(binding) = parse_group_display_name(&display_name) else {
         return Ok(vec![]);

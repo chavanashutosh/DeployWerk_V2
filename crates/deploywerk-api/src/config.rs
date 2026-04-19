@@ -451,9 +451,18 @@ impl Config {
             .filter(|s| !s.is_empty());
 
         Self {
-            database_url: env::var("DATABASE_URL").unwrap_or_else(|_| {
-                "postgresql://deploywerk:deploywerk@127.0.0.1:5432/deploywerk".into()
-            }),
+            database_url: {
+                #[cfg(feature = "postgres")]
+                {
+                    env::var("DATABASE_URL").unwrap_or_else(|_| {
+                        "postgresql://deploywerk:deploywerk@127.0.0.1:5432/deploywerk".into()
+                    })
+                }
+                #[cfg(feature = "sqlite")]
+                {
+                    env::var("DATABASE_URL").unwrap_or_else(|_| "sqlite://./data/deploywerk.db".into())
+                }
+            },
             jwt_secret,
             server_key_encryption_key,
             host: env::var("HOST").unwrap_or_else(|_| "0.0.0.0".into()),

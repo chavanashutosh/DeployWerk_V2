@@ -1,5 +1,8 @@
 # Local stack from repo root:
 #   docker compose up -d postgres minio minio-init
+#
+# The `api` image is built with `--features postgres` (see docker/Dockerfile.api). For SQLite-only dev on the host,
+# run `cargo run -p deploywerk-api` from the repo (default Cargo features use sqlite://./data/deploywerk.db).
 # Optional OIDC:
 #   docker compose --profile authentik up -d
 # Set AUTHENTIK_SECRET_KEY and AUTHENTIK_POSTGRES_PASSWORD in .env (see .env.example).

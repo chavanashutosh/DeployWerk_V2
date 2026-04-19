@@ -1,18 +1,18 @@
 use deploywerk_core::{AppRole, ApplicationMembershipSummary, TeamRole, UserSummary};
-use sqlx::PgPool;
+use crate::DbPool;
 use uuid::Uuid;
 
 use crate::auth::role_from_db;
 use crate::error::ApiError;
 
-pub async fn user_summary_with_rbac(pool: &PgPool, mut u: UserSummary) -> Result<UserSummary, ApiError> {
+pub async fn user_summary_with_rbac(pool: &DbPool, mut u: UserSummary) -> Result<UserSummary, ApiError> {
     u.organization_admin_organization_ids = organization_admin_ids_for_user(pool, u.id).await?;
     u.application_memberships = application_memberships_for_user(pool, u.id).await?;
     Ok(u)
 }
 
 pub async fn membership_role(
-    pool: &PgPool,
+    pool: &DbPool,
     user_id: Uuid,
     team_id: Uuid,
 ) -> Result<Option<TeamRole>, ApiError> {
@@ -27,7 +27,7 @@ pub async fn membership_role(
 }
 
 pub async fn organization_membership_role(
-    pool: &PgPool,
+    pool: &DbPool,
     user_id: Uuid,
     organization_id: Uuid,
 ) -> Result<Option<TeamRole>, ApiError> {
@@ -42,7 +42,7 @@ pub async fn organization_membership_role(
     Ok(row.map(|(r,)| role_from_db(&r)))
 }
 
-pub async fn team_organization_id(pool: &PgPool, team_id: Uuid) -> Result<Uuid, ApiError> {
+pub async fn team_organization_id(pool: &DbPool, team_id: Uuid) -> Result<Uuid, ApiError> {
     let oid: Option<Uuid> = sqlx::query_scalar("SELECT organization_id FROM teams WHERE id = $1")
         .bind(team_id)
         .fetch_optional(pool)
@@ -71,7 +71,7 @@ pub fn can_mutate_org(role: TeamRole) -> bool {
 }
 
 pub async fn require_org_member(
-    pool: &PgPool,
+    pool: &DbPool,
     user_id: Uuid,
     organization_id: Uuid,
 ) -> Result<TeamRole, ApiError> {
@@ -85,7 +85,7 @@ pub async fn require_org_member(
 }
 
 pub async fn require_org_mutator(
-    pool: &PgPool,
+    pool: &DbPool,
     user_id: Uuid,
     organization_id: Uuid,
 ) -> Result<TeamRole, ApiError> {
@@ -97,7 +97,7 @@ pub async fn require_org_mutator(
 }
 
 pub async fn require_org_owner(
-    pool: &PgPool,
+    pool: &DbPool,
     user_id: Uuid,
     organization_id: Uuid,
 ) -> Result<(), ApiError> {
@@ -109,7 +109,7 @@ pub async fn require_org_owner(
 }
 
 pub async fn require_team_member(
-    pool: &PgPool,
+    pool: &DbPool,
     user_id: Uuid,
     team_id: Uuid,
 ) -> Result<TeamRole, ApiError> {
@@ -127,7 +127,7 @@ pub async fn require_team_member(
 }
 
 pub async fn require_team_mutator(
-    pool: &PgPool,
+    pool: &DbPool,
     user_id: Uuid,
     team_id: Uuid,
 ) -> Result<TeamRole, ApiError> {
@@ -139,7 +139,7 @@ pub async fn require_team_mutator(
 }
 
 pub async fn require_team_owner(
-    pool: &PgPool,
+    pool: &DbPool,
     user_id: Uuid,
     team_id: Uuid,
 ) -> Result<(), ApiError> {
@@ -154,7 +154,7 @@ pub fn app_role_from_db(s: &str) -> AppRole {
     AppRole::parse(s).unwrap_or(AppRole::Viewer)
 }
 
-pub async fn user_is_platform_admin(pool: &PgPool, user_id: Uuid) -> Result<bool, ApiError> {
+pub async fn user_is_platform_admin(pool: &DbPool, user_id: Uuid) -> Result<bool, ApiError> {
     let v: Option<(bool,)> = sqlx::query_as("SELECT is_platform_admin FROM users WHERE id = $1")
         .bind(user_id)
         .fetch_optional(pool)
@@ -164,7 +164,7 @@ pub async fn user_is_platform_admin(pool: &PgPool, user_id: Uuid) -> Result<bool
 }
 
 /// Orgs where the user is owner or admin (for org-admin UI / governance read paths).
-pub async fn organization_admin_ids_for_user(pool: &PgPool, user_id: Uuid) -> Result<Vec<Uuid>, ApiError> {
+pub async fn organization_admin_ids_for_user(pool: &DbPool, user_id: Uuid) -> Result<Vec<Uuid>, ApiError> {
     let rows: Vec<(Uuid,)> = sqlx::query_as(
         r#"SELECT organization_id FROM organization_memberships WHERE user_id = $1 AND role IN ('owner', 'admin')"#,
     )
@@ -176,7 +176,7 @@ pub async fn organization_admin_ids_for_user(pool: &PgPool, user_id: Uuid) -> Re
 }
 
 pub async fn application_memberships_for_user(
-    pool: &PgPool,
+    pool: &DbPool,
     user_id: Uuid,
 ) -> Result<Vec<ApplicationMembershipSummary>, ApiError> {
     let rows: Vec<(Uuid, String)> = sqlx::query_as(
@@ -196,7 +196,7 @@ pub async fn application_memberships_for_user(
 }
 
 pub async fn application_membership_role(
-    pool: &PgPool,
+    pool: &DbPool,
     user_id: Uuid,
     application_id: Uuid,
 ) -> Result<Option<AppRole>, ApiError> {
@@ -213,7 +213,7 @@ pub async fn application_membership_role(
 
 /// Resolve team and org for an application (path validation).
 pub async fn application_team_and_org(
-    pool: &PgPool,
+    pool: &DbPool,
     application_id: Uuid,
 ) -> Result<(Uuid, Uuid), ApiError> {
     let row: Option<(Uuid, Uuid)> = sqlx::query_as(
@@ -233,7 +233,7 @@ pub async fn application_team_and_org(
 
 /// True if application belongs to `team_id`.
 pub async fn application_in_team(
-    pool: &PgPool,
+    pool: &DbPool,
     application_id: Uuid,
     team_id: Uuid,
 ) -> Result<bool, ApiError> {
@@ -242,7 +242,7 @@ pub async fn application_in_team(
 }
 
 /// Read access to team-scoped resources: team member, org owner/admin of parent org, or platform admin.
-pub async fn require_team_access_read(pool: &PgPool, user_id: Uuid, team_id: Uuid) -> Result<(), ApiError> {
+pub async fn require_team_access_read(pool: &DbPool, user_id: Uuid, team_id: Uuid) -> Result<(), ApiError> {
     if user_is_platform_admin(pool, user_id).await? {
         return Ok(());
     }
@@ -255,7 +255,7 @@ pub async fn require_team_access_read(pool: &PgPool, user_id: Uuid, team_id: Uui
 }
 
 /// Write access to team resources (servers, invites, etc.): team owner/admin, org owner/admin, or platform admin.
-pub async fn require_team_access_mutate(pool: &PgPool, user_id: Uuid, team_id: Uuid) -> Result<(), ApiError> {
+pub async fn require_team_access_mutate(pool: &DbPool, user_id: Uuid, team_id: Uuid) -> Result<(), ApiError> {
     if user_is_platform_admin(pool, user_id).await? {
         return Ok(());
     }
@@ -270,7 +270,7 @@ pub async fn require_team_access_mutate(pool: &PgPool, user_id: Uuid, team_id: U
 
 /// Read a specific application under a team path: team/org read, explicit app role, or platform admin.
 pub async fn require_application_read(
-    pool: &PgPool,
+    pool: &DbPool,
     user_id: Uuid,
     team_id: Uuid,
     application_id: Uuid,
@@ -290,7 +290,7 @@ pub async fn require_application_read(
 
 /// Mutate app settings, env, delete: team mutator, app admin, or platform admin (not org-only, not app viewer).
 pub async fn require_application_mutate(
-    pool: &PgPool,
+    pool: &DbPool,
     user_id: Uuid,
     team_id: Uuid,
     application_id: Uuid,
@@ -311,7 +311,7 @@ pub async fn require_application_mutate(
 
 /// App-only users may list apps in an environment if they have any membership here.
 pub async fn require_some_app_membership_in_environment(
-    pool: &PgPool,
+    pool: &DbPool,
     user_id: Uuid,
     environment_id: Uuid,
 ) -> Result<(), ApiError> {
@@ -333,7 +333,7 @@ pub async fn require_some_app_membership_in_environment(
 }
 
 pub async fn application_ids_for_user_in_environment(
-    pool: &PgPool,
+    pool: &DbPool,
     user_id: Uuid,
     environment_id: Uuid,
 ) -> Result<Vec<Uuid>, ApiError> {
@@ -352,7 +352,7 @@ pub async fn application_ids_for_user_in_environment(
 
 /// Env var secrets visible to platform admin, team owner/admin, or app admin (not app viewer, not org-only).
 pub async fn user_can_see_application_secrets(
-    pool: &PgPool,
+    pool: &DbPool,
     user_id: Uuid,
     team_id: Uuid,
     application_id: Uuid,
@@ -373,7 +373,7 @@ pub async fn user_can_see_application_secrets(
 
 /// Deploy / rollback: team member (existing behavior), team mutator, app admin, or platform admin. Not app-viewer-only, not org-only.
 pub async fn require_application_deploy(
-    pool: &PgPool,
+    pool: &DbPool,
     user_id: Uuid,
     team_id: Uuid,
     application_id: Uuid,

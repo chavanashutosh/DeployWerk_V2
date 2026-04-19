@@ -1,11 +1,14 @@
-//! Polls PostgreSQL for `queued` deploy jobs and executes them (use with `DEPLOYWERK_DEPLOY_DISPATCH=external` on the API).
+//! Polls the database for `queued` deploy jobs and executes them (use with `DEPLOYWERK_DEPLOY_DISPATCH=external` on the API).
 //!
 //! Environment: same `DATABASE_URL`, `SERVER_KEY_ENCRYPTION_KEY`, and deploy-related vars as the API (`DEPLOYWERK_PLATFORM_*`, `DEPLOYWERK_EDGE_*`, etc.). Does **not** run migrations — start the API once to migrate.
 
 use std::time::Duration;
 
-use deploywerk_api::{execute_deploy_job, try_claim_next_queued_deploy_job, Config};
+use deploywerk_api::{execute_deploy_job, try_claim_next_queued_deploy_job, Config, DbPool};
+#[cfg(feature = "postgres")]
 use sqlx::postgres::PgPoolOptions;
+#[cfg(feature = "sqlite")]
+use sqlx::sqlite::SqlitePoolOptions;
 use tracing_subscriber::EnvFilter;
 
 #[tokio::main]
@@ -20,13 +23,50 @@ async fn main() -> anyhow::Result<()> {
         .and_then(|s| s.parse().ok())
         .unwrap_or(2000);
 
-    let pool = PgPoolOptions::new()
+    #[cfg(feature = "sqlite")]
+    {
+        let path_part = config
+            .database_url
+            .trim_start_matches("sqlite://")
+            .split('?')
+            .next()
+            .unwrap_or("");
+        if !path_part.is_empty() && path_part != ":memory:" {
+            if let Some(parent) = std::path::Path::new(path_part).parent() {
+                if !parent.as_os_str().is_empty() {
+                    std::fs::create_dir_all(parent)?;
+                }
+            }
+        }
+    }
+
+    #[cfg(feature = "postgres")]
+    let pool: DbPool = PgPoolOptions::new()
         .max_connections(
             std::env::var("DATABASE_MAX_CONNECTIONS")
                 .ok()
                 .and_then(|s| s.parse().ok())
                 .unwrap_or(5),
         )
+        .connect(&config.database_url)
+        .await?;
+
+    #[cfg(feature = "sqlite")]
+    let pool: DbPool = SqlitePoolOptions::new()
+        .max_connections(
+            std::env::var("DATABASE_MAX_CONNECTIONS")
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(5),
+        )
+        .after_connect(|conn, _meta| {
+            Box::pin(async move {
+                sqlx::query("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")
+                    .execute(conn)
+                    .await?;
+                Ok(())
+            })
+        })
         .connect(&config.database_url)
         .await?;
 

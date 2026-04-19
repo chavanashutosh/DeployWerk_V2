@@ -18,7 +18,7 @@ use crate::AppState;
 
 /// Ensures each team has a built-in platform destination when the feature is enabled.
 pub(crate) async fn ensure_platform_destination(
-    pool: &sqlx::PgPool,
+    pool: &crate::DbPool,
     team_id: Uuid,
     enabled: bool,
 ) -> Result<(), sqlx::Error> {
@@ -65,7 +65,7 @@ fn kind_from_db(s: &str) -> Result<DestinationKind, ApiError> {
 }
 
 async fn ensure_server_on_team(
-    pool: &sqlx::PgPool,
+    pool: &crate::DbPool,
     team_id: Uuid,
     server_id: Uuid,
 ) -> Result<(), ApiError> {

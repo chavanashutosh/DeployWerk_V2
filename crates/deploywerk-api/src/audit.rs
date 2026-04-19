@@ -7,7 +7,7 @@ use uuid::Uuid;
 use crate::error::ApiError;
 
 pub async fn log_team_audit(
-    pool: &sqlx::PgPool,
+    pool: &crate::DbPool,
     team_id: Uuid,
     actor_user_id: Uuid,
     action: &str,
@@ -40,7 +40,7 @@ pub async fn log_team_audit(
 
 /// Best-effort audit log write (does not fail the request).
 pub async fn try_log_team_audit(
-    pool: &sqlx::PgPool,
+    pool: &crate::DbPool,
     team_id: Uuid,
     actor_user_id: Uuid,
     action: &str,

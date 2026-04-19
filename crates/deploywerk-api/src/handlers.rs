@@ -478,9 +478,11 @@ async fn login(
 
     let token = issue_token(id, &state.jwt_secret)?;
 
-    let pref: Option<(Option<Uuid>, Option<Uuid>, serde_json::Value)> = sqlx::query_as(
-        "SELECT current_team_id, current_organization_id, COALESCE(settings_json, '{}'::jsonb) FROM user_preferences WHERE user_id = $1",
-    )
+    let q = format!(
+        "SELECT current_team_id, current_organization_id, {} FROM user_preferences WHERE user_id = $1",
+        crate::sql_compat::coalesce_user_prefs_settings_json()
+    );
+    let pref: Option<(Option<Uuid>, Option<Uuid>, serde_json::Value)> = sqlx::query_as(&q)
     .bind(id)
     .fetch_optional(&state.pool)
     .await
@@ -522,13 +524,14 @@ async fn me(
         Option<Uuid>,
         serde_json::Value,
         bool,
-    )> = sqlx::query_as(
+    )> = sqlx::query_as(&format!(
         r#"SELECT u.id, u.email, u.name, up.current_team_id, up.current_organization_id,
-                  COALESCE(up.settings_json, '{}'::jsonb), u.is_platform_admin
+                  {}, u.is_platform_admin
            FROM users u
            LEFT JOIN user_preferences up ON up.user_id = u.id
            WHERE u.id = $1"#,
-    )
+        crate::sql_compat::coalesce_up_settings_json()
+    ))
     .bind(p.user_id)
     .fetch_optional(&state.pool)
     .await
@@ -1564,7 +1567,7 @@ async fn delete_environment(
 }
 
 async fn ensure_project_in_team(
-    pool: &sqlx::PgPool,
+    pool: &crate::DbPool,
     project_id: Uuid,
     team_id: Uuid,
 ) -> Result<(), ApiError> {
@@ -1776,11 +1779,13 @@ async fn create_invitation(
         return Err(ApiError::BadRequest("invalid email".into()));
     }
 
+    let hour_ago = Utc::now() - Duration::hours(1);
     let recent_invites: (i64,) = sqlx::query_as(
-        r#"SELECT COUNT(*)::bigint FROM invitations
-           WHERE team_id = $1 AND created_at > NOW() - INTERVAL '1 hour'"#,
+        r#"SELECT COUNT(*) FROM invitations
+           WHERE team_id = $1 AND created_at > $2"#,
     )
     .bind(team_id)
+    .bind(hour_ago)
     .fetch_one(&state.pool)
     .await
     .map_err(|_| ApiError::Internal)?;

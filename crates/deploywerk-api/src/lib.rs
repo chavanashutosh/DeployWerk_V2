@@ -3,6 +3,7 @@
 mod admin;
 mod cli_invoke;
 mod applications;
+mod db;
 mod auth;
 mod audit;
 mod config;
@@ -25,6 +26,7 @@ mod seed;
 mod servers;
 mod saml;
 mod slug;
+mod sql_compat;
 mod team_platform;
 mod team_secrets;
 mod webhook_github;
@@ -39,8 +41,12 @@ use std::time::Duration;
 
 use axum::Router;
 
+pub use db::DbPool;
+
+#[cfg(feature = "postgres")]
 use sqlx::postgres::PgPoolOptions;
-use sqlx::PgPool;
+#[cfg(feature = "sqlite")]
+use sqlx::sqlite::SqlitePoolOptions;
 use tower::limit::ConcurrencyLimitLayer;
 use tower_http::cors::{Any, CorsLayer};
 use tower_http::trace::{DefaultMakeSpan, DefaultOnResponse, TraceLayer};
@@ -51,7 +57,7 @@ pub use config::{Config, DeployWorkerConfig};
 
 /// Shared application state for Axum handlers.
 pub struct AppState {
-    pub pool: PgPool,
+    pub pool: DbPool,
     pub jwt_secret: String,
     pub server_key_encryption_key: [u8; 32],
     pub demo_logins_public: bool,
@@ -113,6 +119,24 @@ pub async fn run() -> anyhow::Result<()> {
         .and_then(|s| s.parse().ok())
         .filter(|v| *v > 0);
 
+    #[cfg(feature = "sqlite")]
+    {
+        let path_part = config
+            .database_url
+            .trim_start_matches("sqlite://")
+            .split('?')
+            .next()
+            .unwrap_or("");
+        if !path_part.is_empty() && path_part != ":memory:" {
+            if let Some(parent) = std::path::Path::new(path_part).parent() {
+                if !parent.as_os_str().is_empty() {
+                    std::fs::create_dir_all(parent)?;
+                }
+            }
+        }
+    }
+
+    #[cfg(feature = "postgres")]
     let pool = PgPoolOptions::new()
         .max_connections(max_connections)
         .acquire_timeout(Duration::from_secs(acquire_timeout_secs))
@@ -120,7 +144,6 @@ pub async fn run() -> anyhow::Result<()> {
             let statement_timeout_ms = statement_timeout_ms;
             Box::pin(async move {
                 if let Some(ms) = statement_timeout_ms {
-                    // Numeric-only to avoid SQL injection risk.
                     let q = format!("SET statement_timeout = {ms}");
                     sqlx::query(&q).execute(conn).await?;
                 }
@@ -130,7 +153,26 @@ pub async fn run() -> anyhow::Result<()> {
         .connect(&config.database_url)
         .await?;
 
+    #[cfg(feature = "sqlite")]
+    let pool = SqlitePoolOptions::new()
+        .max_connections(max_connections)
+        .acquire_timeout(Duration::from_secs(acquire_timeout_secs))
+        .after_connect(|conn, _meta| {
+            Box::pin(async move {
+                sqlx::query("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")
+                    .execute(conn)
+                    .await?;
+                Ok(())
+            })
+        })
+        .connect(&config.database_url)
+        .await?;
+
+    #[cfg(feature = "postgres")]
     sqlx::migrate!("./migrations").run(&pool).await?;
+
+    #[cfg(feature = "sqlite")]
+    sqlx::migrate!("./migrations_sqlite").run(&pool).await?;
 
     if let Some(ref email) = config.bootstrap_platform_admin_email {
         let e = email.trim();

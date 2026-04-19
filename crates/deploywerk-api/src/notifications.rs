@@ -9,7 +9,7 @@ use axum::{Json, Router};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use sqlx::PgPool;
+use crate::DbPool;
 use uuid::Uuid;
 
 use crate::auth::require_principal;
@@ -176,7 +176,7 @@ fn notification_post_body(
 }
 
 pub fn spawn_deploy_notifications(
-    pool: PgPool,
+    pool: DbPool,
     team_id: Uuid,
     job_id: Uuid,
     application_id: Uuid,
@@ -209,7 +209,7 @@ pub fn spawn_deploy_notifications(
 }
 
 async fn fan_out_webhooks(
-    pool: &PgPool,
+    pool: &DbPool,
     team_id: Uuid,
     event: &str,
     payload: serde_json::Value,

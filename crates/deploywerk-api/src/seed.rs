@@ -1,6 +1,6 @@
 use chrono::Utc;
 use deploywerk_core::{AppRole, TeamRole};
-use sqlx::PgPool;
+use crate::DbPool;
 use uuid::Uuid;
 
 use crate::auth::hash_password;
@@ -23,7 +23,7 @@ const DEMO_ENV_SLUG: &str = "production";
 const DEMO_APP_SLUG: &str = "hello";
 const DEMO_APP2_SLUG: &str = "api";
 
-pub async fn seed_demo_users(pool: &PgPool, server_key_encryption_key: &[u8; 32]) -> Result<(), ApiError> {
+pub async fn seed_demo_users(pool: &DbPool, server_key_encryption_key: &[u8; 32]) -> Result<(), ApiError> {
     let demos = [
         DemoAccount {
             email: "owner@demo.deploywerk.local",
@@ -195,7 +195,7 @@ pub async fn seed_demo_users(pool: &PgPool, server_key_encryption_key: &[u8; 32]
 }
 
 async fn upsert_password_user(
-    pool: &PgPool,
+    pool: &DbPool,
     email: &str,
     password: &str,
     name: &str,
@@ -227,7 +227,7 @@ async fn upsert_password_user(
     .await
     .map_err(|_| ApiError::Internal)?;
     sqlx::query(
-        "INSERT INTO user_preferences (user_id, settings_json) VALUES ($1, '{}'::jsonb) ON CONFLICT (user_id) DO NOTHING",
+        crate::sql_compat::insert_user_prefs_empty_settings(),
     )
     .bind(id)
     .execute(pool)
@@ -238,7 +238,7 @@ async fn upsert_password_user(
 
 /// Extra users for RBAC demos: org-only admin, team admin, app-scoped admin (not platform admin).
 async fn seed_rbac_demo_accounts(
-    pool: &PgPool,
+    pool: &DbPool,
     org_id: Uuid,
     team_id: Uuid,
     hello_app_id: Uuid,
@@ -389,7 +389,7 @@ async fn seed_rbac_demo_accounts(
 }
 
 async fn seed_demo_storage_backend(
-    pool: &PgPool,
+    pool: &DbPool,
     team_id: Uuid,
     server_key_encryption_key: &[u8; 32],
 ) -> Result<(), ApiError> {
@@ -451,7 +451,7 @@ async fn seed_demo_storage_backend(
 
 /// Idempotent sample project / environment / applications for the demo team (UI and API exploration).
 /// Returns the `hello` application id (for app-scoped RBAC seeding).
-async fn seed_demo_project_env_app(pool: &PgPool, team_id: Uuid) -> Result<Uuid, ApiError> {
+async fn seed_demo_project_env_app(pool: &DbPool, team_id: Uuid) -> Result<Uuid, ApiError> {
     let project_id =
         if sqlx::query_scalar::<_, i64>("SELECT COUNT(1) FROM projects WHERE team_id = $1 AND slug = $2")
             .bind(team_id)

@@ -239,7 +239,7 @@ async fn list_secret_versions(
 
 /// Resolve `dw_secret:NAME` placeholders in env values for deploy.
 pub async fn resolve_dw_secret_env_values(
-    pool: &sqlx::PgPool,
+    pool: &crate::DbPool,
     team_id: Uuid,
     key: &[u8; 32],
     rows: Vec<(String, String, bool)>,

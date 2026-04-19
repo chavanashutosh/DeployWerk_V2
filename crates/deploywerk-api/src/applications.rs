@@ -393,7 +393,7 @@ async fn list_team_deployments(
                   e.id AS environment_id, e.name AS environment_name, p.id AS project_id, p.name AS project_name,
                   j.status, j.created_at, j.started_at, j.finished_at,
                   j.git_ref, j.git_sha, j.git_base_sha, COALESCE(j.job_kind, 'standard') AS job_kind, j.pr_number,
-                  a.git_repo_full_name, a.auto_hostname, COALESCE(a.domains, '[]'::jsonb) AS domains,
+                  a.git_repo_full_name, a.auto_hostname, COALESCE(a.domains, '[]') AS domains,
                   COALESCE(NULLIF(trim(j.deploy_strategy), ''), NULLIF(trim(a.deploy_strategy), ''), 'standard') AS deploy_strategy
            FROM deploy_jobs j
            JOIN applications a ON a.id = j.application_id
@@ -480,6 +480,7 @@ async fn list_team_domains(
     p.require_read()?;
     require_team_access_read(&state.pool, p.user_id, team_id).await?;
 
+    #[cfg(feature = "postgres")]
     let rows: Vec<(String, Uuid, String, String, String, Option<String>)> = sqlx::query_as(
         r#"SELECT d.domain_name, a.id, a.name, e.name, p.name, a.auto_hostname
            FROM applications a
@@ -489,6 +490,21 @@ async fn list_team_domains(
              AS d(domain_name)
            WHERE p.team_id = $1
            ORDER BY d.domain_name, a.name"#,
+    )
+    .bind(team_id)
+    .fetch_all(&state.pool)
+    .await
+    .map_err(|_| ApiError::Internal)?;
+
+    #[cfg(feature = "sqlite")]
+    let rows: Vec<(String, Uuid, String, String, String, Option<String>)> = sqlx::query_as(
+        r#"SELECT d.value AS domain_name, a.id, a.name, e.name, p.name, a.auto_hostname
+           FROM applications a
+           JOIN environments e ON e.id = a.environment_id
+           JOIN projects p ON p.id = e.project_id
+           JOIN json_each(COALESCE(NULLIF(a.domains, ''), '[]')) AS d
+           WHERE p.team_id = $1
+           ORDER BY d.value, a.name"#,
     )
     .bind(team_id)
     .fetch_all(&state.pool)
@@ -515,7 +531,7 @@ async fn list_team_domains(
 }
 
 async fn ensure_env_in_team_project(
-    pool: &sqlx::PgPool,
+    pool: &crate::DbPool,
     team_id: Uuid,
     project_id: Uuid,
     environment_id: Uuid,
@@ -541,7 +557,7 @@ async fn ensure_env_in_team_project(
 }
 
 async fn ensure_application_in_env(
-    pool: &sqlx::PgPool,
+    pool: &crate::DbPool,
     application_id: Uuid,
     environment_id: Uuid,
 ) -> Result<(), ApiError> {
@@ -824,7 +840,7 @@ fn docker_run_cmd(
     (s, s_log)
 }
 
-async fn append_job_log(pool: &sqlx::PgPool, job_id: Uuid, line: &str) {
+async fn append_job_log(pool: &crate::DbPool, job_id: Uuid, line: &str) {
     let _ = sqlx::query(
         "UPDATE deploy_jobs SET log = log || $1 WHERE id = $2",
     )
@@ -835,7 +851,7 @@ async fn append_job_log(pool: &sqlx::PgPool, job_id: Uuid, line: &str) {
 }
 
 async fn finish_job(
-    pool: &sqlx::PgPool,
+    pool: &crate::DbPool,
     job_id: Uuid,
     status: DeployJobStatus,
 ) -> Result<(), ApiError> {
@@ -863,7 +879,7 @@ struct StorageBackendRow {
 }
 
 async fn load_team_storage_backend(
-    pool: &sqlx::PgPool,
+    pool: &crate::DbPool,
     team_id: Uuid,
 ) -> Result<Option<StorageBackendRow>, ApiError> {
     let row: Option<StorageBackendRow> = sqlx::query_as(
@@ -1014,7 +1030,7 @@ async fn s3_put_object_sigv4(
 }
 
 async fn upload_deploy_job_artifacts(
-    pool: &sqlx::PgPool,
+    pool: &crate::DbPool,
     server_key_encryption_key: &[u8; 32],
     job_id: Uuid,
     team_id: Uuid,
@@ -1102,7 +1118,7 @@ async fn upload_deploy_job_artifacts(
 }
 
 async fn finish_job_with_deploy_notify(
-    pool: &sqlx::PgPool,
+    pool: &crate::DbPool,
     server_key_encryption_key: &[u8; 32],
     job_id: Uuid,
     status: DeployJobStatus,
@@ -1198,7 +1214,7 @@ struct DeployJobApplicationRow {
 
 /// Runs a single deploy job (SSH/local Docker). Safe to call from `deploywerk-deploy-worker` after claiming a row.
 pub async fn execute_deploy_job(
-    pool: sqlx::PgPool,
+    pool: crate::DbPool,
     cfg: DeployWorkerConfig,
     job_id: Uuid,
     application_id: Uuid,
@@ -1218,7 +1234,7 @@ pub async fn execute_deploy_job(
                       a.docker_image, a.slug, a.destination_id,
                       a.build_image_from_git, a.git_repo_url, a.git_build_ref, a.dockerfile_path,
                       a.auto_hostname,
-                      COALESCE(a.runtime_volumes_json, '[]'::jsonb) AS runtime_volumes_json,
+                      COALESCE(a.runtime_volumes_json, '[]') AS runtime_volumes_json,
                       COALESCE(d.kind, '') AS dest_kind,
                       s.host, s.ssh_port, s.ssh_user, s.ssh_private_key_ciphertext,
                       p.team_id, a.name,
@@ -1938,47 +1954,86 @@ pub async fn execute_deploy_job(
         }
 }
 
-/// Claim one `queued` job using `FOR UPDATE SKIP LOCKED` (Postgres). Returns `None` if the queue is empty.
+/// Claim one `queued` job (`FOR UPDATE SKIP LOCKED` on Postgres; select-then-update on SQLite).
 pub async fn try_claim_next_queued_deploy_job(
-    pool: &sqlx::PgPool,
+    pool: &crate::DbPool,
 ) -> anyhow::Result<Option<(Uuid, Uuid)>> {
-    let mut tx = pool.begin().await?;
-    let row: Option<(Uuid, Uuid)> = sqlx::query_as(
-        r#"SELECT id, application_id FROM deploy_jobs
-           WHERE status = 'queued'
-           ORDER BY created_at ASC
-           FOR UPDATE SKIP LOCKED
-           LIMIT 1"#,
-    )
-    .fetch_optional(&mut *tx)
-    .await?;
+    #[cfg(feature = "postgres")]
+    {
+        let mut tx = pool.begin().await?;
+        let row: Option<(Uuid, Uuid)> = sqlx::query_as(
+            r#"SELECT id, application_id FROM deploy_jobs
+               WHERE status = 'queued'
+               ORDER BY created_at ASC
+               FOR UPDATE SKIP LOCKED
+               LIMIT 1"#,
+        )
+        .fetch_optional(&mut *tx)
+        .await?;
 
-    let Some((job_id, application_id)) = row else {
+        let Some((job_id, application_id)) = row else {
+            tx.commit().await?;
+            return Ok(None);
+        };
+
+        let now = Utc::now();
+        let updated = sqlx::query(
+            "UPDATE deploy_jobs SET status = 'running', started_at = $1 WHERE id = $2 AND status = 'queued'",
+        )
+        .bind(now)
+        .bind(job_id)
+        .execute(&mut *tx)
+        .await?
+        .rows_affected();
+
+        if updated == 0 {
+            tx.commit().await?;
+            return Ok(None);
+        }
+
         tx.commit().await?;
-        return Ok(None);
-    };
-
-    let now = Utc::now();
-    let updated = sqlx::query(
-        "UPDATE deploy_jobs SET status = 'running', started_at = $1 WHERE id = $2 AND status = 'queued'",
-    )
-    .bind(now)
-    .bind(job_id)
-    .execute(&mut *tx)
-    .await?
-    .rows_affected();
-
-    if updated == 0 {
-        tx.commit().await?;
-        return Ok(None);
+        return Ok(Some((job_id, application_id)));
     }
 
-    tx.commit().await?;
-    Ok(Some((job_id, application_id)))
+    #[cfg(feature = "sqlite")]
+    {
+        let mut tx = pool.begin().await?;
+        let row: Option<(Uuid, Uuid)> = sqlx::query_as(
+            r#"SELECT id, application_id FROM deploy_jobs
+               WHERE status = 'queued'
+               ORDER BY created_at ASC
+               LIMIT 1"#,
+        )
+        .fetch_optional(&mut *tx)
+        .await?;
+
+        let Some((job_id, application_id)) = row else {
+            tx.commit().await?;
+            return Ok(None);
+        };
+
+        let now = Utc::now();
+        let updated = sqlx::query(
+            "UPDATE deploy_jobs SET status = 'running', started_at = $1 WHERE id = $2 AND status = 'queued'",
+        )
+        .bind(now)
+        .bind(job_id)
+        .execute(&mut *tx)
+        .await?
+        .rows_affected();
+
+        if updated == 0 {
+            tx.commit().await?;
+            return Ok(None);
+        }
+
+        tx.commit().await?;
+        Ok(Some((job_id, application_id)))
+    }
 }
 
 fn run_deploy_worker(
-    pool: sqlx::PgPool,
+    pool: crate::DbPool,
     cfg: DeployWorkerConfig,
     job_id: Uuid,
     application_id: Uuid,
@@ -2000,7 +2055,7 @@ struct DeployPreflight {
 }
 
 async fn load_deploy_preflight(
-    pool: &sqlx::PgPool,
+    pool: &crate::DbPool,
     application_id: Uuid,
 ) -> Result<DeployPreflight, ApiError> {
     let row: Option<(bool, Option<String>, Option<String>, bool, String)> = sqlx::query_as(
@@ -2736,7 +2791,7 @@ fn parse_domains(v: &serde_json::Value) -> Vec<String> {
 }
 
 async fn load_env_vars(
-    pool: &sqlx::PgPool,
+    pool: &crate::DbPool,
     application_id: Uuid,
     include_secret_values: bool,
 ) -> Result<Vec<ApplicationEnvVarPublic>, ApiError> {
@@ -2762,7 +2817,7 @@ async fn load_env_vars(
         .collect())
 }
 
-async fn allocate_auto_hostname(pool: &sqlx::PgPool, base_domain: &str) -> Result<String, ApiError> {
+async fn allocate_auto_hostname(pool: &crate::DbPool, base_domain: &str) -> Result<String, ApiError> {
     let base = base_domain.trim().trim_end_matches('.').to_lowercase();
     if base.is_empty() {
         return Err(ApiError::Internal);
@@ -2816,7 +2871,7 @@ struct ApplicationDbRow {
 }
 
 async fn load_application_row(
-    pool: &sqlx::PgPool,
+    pool: &crate::DbPool,
     application_id: Uuid,
     environment_id: Uuid,
 ) -> Result<ApplicationDbRow, ApiError> {
@@ -2824,7 +2879,7 @@ async fn load_application_row(
         r#"SELECT id, environment_id, destination_id, name, slug, docker_image, domains, git_repo_url,
                   git_repo_full_name, auto_hostname, auto_deploy_on_push, git_branch_pattern,
                   build_image_from_git, git_build_ref, dockerfile_path, pr_preview_enabled,
-                  COALESCE(runtime_volumes_json, '[]'::jsonb) AS runtime_volumes_json,
+                  COALESCE(runtime_volumes_json, '[]') AS runtime_volumes_json,
                   created_at,
                   last_deployed_image, previous_deployed_image, deploy_strategy, require_deploy_approval,
                   NULLIF(trim(pre_deploy_hook_url), '') AS pre_deploy_hook_url,
@@ -2887,7 +2942,7 @@ async fn list_applications(
         r#"SELECT id, environment_id, destination_id, name, slug, docker_image, domains, git_repo_url,
                   git_repo_full_name, auto_hostname, auto_deploy_on_push, git_branch_pattern,
                   build_image_from_git, git_build_ref, dockerfile_path, pr_preview_enabled,
-                  COALESCE(runtime_volumes_json, '[]'::jsonb) AS runtime_volumes_json,
+                  COALESCE(runtime_volumes_json, '[]') AS runtime_volumes_json,
                   created_at,
                   last_deployed_image, previous_deployed_image, deploy_strategy, require_deploy_approval,
                   NULLIF(trim(pre_deploy_hook_url), '') AS pre_deploy_hook_url,

@@ -11,7 +11,7 @@ use hex;
 use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, Validation};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use sqlx::PgPool;
+use crate::DbPool;
 use uuid::Uuid;
 
 use crate::error::ApiError;
@@ -165,7 +165,7 @@ fn api_token_ip_allowed(client_ip: Option<IpAddr>, allowed: &Option<serde_json::
 }
 
 pub async fn resolve_principal(
-    pool: &PgPool,
+    pool: &DbPool,
     token: &str,
     secret: &str,
     client_ip: Option<IpAddr>,
@@ -192,10 +192,12 @@ pub async fn resolve_principal(
     }
 
     let h = hash_api_token_raw(token);
+    let now = Utc::now();
     let row: Option<(Uuid, String, Option<serde_json::Value>)> = sqlx::query_as(
-        "SELECT user_id, scopes, allowed_cidrs FROM api_tokens WHERE token_hash = $1 AND (expires_at IS NULL OR expires_at > NOW())",
+        "SELECT user_id, scopes, allowed_cidrs FROM api_tokens WHERE token_hash = $1 AND (expires_at IS NULL OR expires_at > $2)",
     )
             .bind(&h)
+            .bind(now)
             .fetch_optional(pool)
             .await
             .map_err(|_| ApiError::Internal)?;

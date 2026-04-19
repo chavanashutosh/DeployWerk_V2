@@ -5,7 +5,8 @@ WORKDIR /app
 COPY Cargo.toml Cargo.lock ./
 COPY crates ./crates
 
-RUN cargo build --release -p deploywerk-api --bin deploywerk-api
+# Docker Compose provides PostgreSQL; build with the postgres backend (default crate feature is sqlite for local file DB).
+RUN cargo build --release -p deploywerk-api --bin deploywerk-api --no-default-features --features postgres
 
 FROM debian:bookworm-slim
 

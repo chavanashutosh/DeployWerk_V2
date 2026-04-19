@@ -1,14 +1,14 @@
 //! Platform product entitlements (per team). Distinct from customer `feature_flags`.
 
 use chrono::Utc;
-use sqlx::PgPool;
+use crate::DbPool;
 use uuid::Uuid;
 
 use crate::error::ApiError;
 
 /// Effective feature access: explicit `team_entitlements` row overrides `platform_feature_definitions.default_on`.
 pub async fn team_has_feature(
-    pool: &PgPool,
+    pool: &DbPool,
     team_id: Uuid,
     feature_key: &str,
 ) -> Result<bool, ApiError> {
@@ -46,7 +46,7 @@ pub async fn team_has_feature(
 }
 
 pub async fn require_team_feature(
-    pool: &PgPool,
+    pool: &DbPool,
     team_id: Uuid,
     feature_key: &'static str,
 ) -> Result<(), ApiError> {

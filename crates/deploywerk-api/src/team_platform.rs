@@ -868,7 +868,7 @@ struct FlagPatch {
 }
 
 async fn ensure_env_in_team(
-    pool: &sqlx::PgPool,
+    pool: &crate::DbPool,
     team_id: Uuid,
     env_id: Uuid,
 ) -> Result<(), ApiError> {
@@ -1344,7 +1344,7 @@ async fn team_search(
 
     let projects: Vec<(Uuid, String, String)> = sqlx::query_as(
         r#"SELECT id, name, slug FROM projects
-           WHERE team_id = $1 AND (name ILIKE $2 ESCAPE '\' OR slug ILIKE $2 ESCAPE '\') LIMIT 20"#,
+           WHERE team_id = $1 AND (LOWER(name) LIKE LOWER($2) ESCAPE '\' OR LOWER(slug) LIKE LOWER($2) ESCAPE '\') LIMIT 20"#,
     )
     .bind(team_id)
     .bind(&needle)
@@ -1366,7 +1366,7 @@ async fn team_search(
     let envs: Vec<(Uuid, String, String, String, Uuid)> = sqlx::query_as(
         r#"SELECT e.id, e.name, e.slug, p.name, e.project_id FROM environments e
            JOIN projects p ON p.id = e.project_id
-           WHERE p.team_id = $1 AND (e.name ILIKE $2 ESCAPE '\' OR e.slug ILIKE $2 ESCAPE '\') LIMIT 20"#,
+           WHERE p.team_id = $1 AND (LOWER(e.name) LIKE LOWER($2) ESCAPE '\' OR LOWER(e.slug) LIKE LOWER($2) ESCAPE '\') LIMIT 20"#,
     )
     .bind(team_id)
     .bind(&needle)
@@ -1389,7 +1389,7 @@ async fn team_search(
         r#"SELECT a.id, a.name, a.slug, e.name, p.name, e.project_id, e.id FROM applications a
            JOIN environments e ON e.id = a.environment_id
            JOIN projects p ON p.id = e.project_id
-           WHERE p.team_id = $1 AND (a.name ILIKE $2 ESCAPE '\' OR a.slug ILIKE $2 ESCAPE '\') LIMIT 20"#,
+           WHERE p.team_id = $1 AND (LOWER(a.name) LIKE LOWER($2) ESCAPE '\' OR LOWER(a.slug) LIKE LOWER($2) ESCAPE '\') LIMIT 20"#,
     )
     .bind(team_id)
     .bind(&needle)
@@ -1410,7 +1410,7 @@ async fn team_search(
 
     let servers: Vec<(Uuid, String, String)> = sqlx::query_as(
         r#"SELECT id, name, host FROM servers
-           WHERE team_id = $1 AND (name ILIKE $2 ESCAPE '\' OR host ILIKE $2 ESCAPE '\') LIMIT 20"#,
+           WHERE team_id = $1 AND (LOWER(name) LIKE LOWER($2) ESCAPE '\' OR LOWER(host) LIKE LOWER($2) ESCAPE '\') LIMIT 20"#,
     )
     .bind(team_id)
     .bind(&needle)
@@ -2777,7 +2777,7 @@ async fn agent_heartbeat(
 
 // --- RUM ---
 
-async fn ensure_rum_secret(pool: &sqlx::PgPool, team_id: Uuid) -> Result<String, ApiError> {
+async fn ensure_rum_secret(pool: &crate::DbPool, team_id: Uuid) -> Result<String, ApiError> {
     let cur: Option<String> = sqlx::query_scalar("SELECT rum_ingest_secret FROM teams WHERE id = $1")
         .bind(team_id)
         .fetch_one(pool)
@@ -3735,7 +3735,7 @@ async fn mollie_webhook(
 
 // --- Health check background worker ---
 
-pub async fn run_health_check_loop(pool: sqlx::PgPool) {
+pub async fn run_health_check_loop(pool: crate::DbPool) {
     let mut ticker = tokio::time::interval(std::time::Duration::from_secs(30));
     loop {
         ticker.tick().await;
@@ -3751,7 +3751,7 @@ pub async fn run_health_check_loop(pool: sqlx::PgPool) {
 ///
 /// This does not attempt to infer whether a preview is still “live” at the edge; it only applies
 /// conservative retention rules to rows in `preview_deployments`.
-pub async fn run_housekeeping_loop(pool: sqlx::PgPool) {
+pub async fn run_housekeeping_loop(pool: crate::DbPool) {
     let mut ticker = tokio::time::interval(std::time::Duration::from_secs(60 * 30));
     loop {
         ticker.tick().await;
@@ -3764,7 +3764,7 @@ pub async fn run_housekeeping_loop(pool: sqlx::PgPool) {
     }
 }
 
-async fn preview_retention_sweep(pool: &sqlx::PgPool) -> Result<(), ApiError> {
+async fn preview_retention_sweep(pool: &crate::DbPool) -> Result<(), ApiError> {
     // Keep “active” previews longer; tear-down/error rows can be dropped earlier.
     let active_days: i64 = std::env::var("DEPLOYWERK_PREVIEW_RETENTION_DAYS_ACTIVE")
         .ok()
@@ -3806,7 +3806,7 @@ async fn preview_retention_sweep(pool: &sqlx::PgPool) -> Result<(), ApiError> {
     Ok(())
 }
 
-async fn otlp_retention_sweep(pool: &sqlx::PgPool) -> Result<(), ApiError> {
+async fn otlp_retention_sweep(pool: &crate::DbPool) -> Result<(), ApiError> {
     let days: i64 = std::env::var("DEPLOYWERK_OTLP_RETENTION_DAYS")
         .ok()
         .and_then(|s| s.parse().ok())
@@ -3821,7 +3821,7 @@ async fn otlp_retention_sweep(pool: &sqlx::PgPool) -> Result<(), ApiError> {
     Ok(())
 }
 
-async fn run_health_checks_once(pool: &sqlx::PgPool) -> Result<(), ApiError> {
+async fn run_health_checks_once(pool: &crate::DbPool) -> Result<(), ApiError> {
     let rows: Vec<(Uuid, String)> = sqlx::query_as(
         "SELECT id, target_url FROM health_checks",
     )

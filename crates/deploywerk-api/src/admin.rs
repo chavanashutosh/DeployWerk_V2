@@ -177,7 +177,7 @@ fn spawn_billing_change_notice_emails(
 }
 
 pub async fn log_admin_audit(
-    pool: &sqlx::PgPool,
+    pool: &crate::DbPool,
     actor: Uuid,
     action: &str,
     entity_type: &str,
@@ -239,7 +239,7 @@ async fn list_users(
     } else {
         sqlx::query_as(
             r#"SELECT id, email, name, created_at, is_platform_admin FROM users
-               WHERE email ILIKE $1 OR COALESCE(name, '') ILIKE $1
+               WHERE LOWER(email) LIKE LOWER($1) OR LOWER(COALESCE(name, '')) LIKE LOWER($1)
                ORDER BY created_at DESC LIMIT $2 OFFSET $3"#,
         )
         .bind(&like)
@@ -441,7 +441,7 @@ async fn list_organizations(
     let rows: Vec<(Uuid, String, String, DateTime<Utc>, i64)> = if search.is_empty() {
         sqlx::query_as(
             r#"SELECT o.id, o.name, o.slug, o.created_at,
-                      (SELECT COUNT(*)::bigint FROM teams t WHERE t.organization_id = o.id) AS team_count
+                      (SELECT COUNT(*) FROM teams t WHERE t.organization_id = o.id) AS team_count
                FROM organizations o
                ORDER BY o.created_at DESC
                LIMIT $1 OFFSET $2"#,
@@ -454,9 +454,9 @@ async fn list_organizations(
     } else {
         sqlx::query_as(
             r#"SELECT o.id, o.name, o.slug, o.created_at,
-                      (SELECT COUNT(*)::bigint FROM teams t WHERE t.organization_id = o.id) AS team_count
+                      (SELECT COUNT(*) FROM teams t WHERE t.organization_id = o.id) AS team_count
                FROM organizations o
-               WHERE o.name ILIKE $1 OR o.slug ILIKE $1
+               WHERE LOWER(o.name) LIKE LOWER($1) OR LOWER(o.slug) LIKE LOWER($1)
                ORDER BY o.created_at DESC
                LIMIT $2 OFFSET $3"#,
         )
@@ -512,7 +512,7 @@ async fn get_organization(
 
     let row: Option<(Uuid, String, String, DateTime<Utc>, i64)> = sqlx::query_as(
         r#"SELECT o.id, o.name, o.slug, o.created_at,
-                  (SELECT COUNT(*)::bigint FROM teams t WHERE t.organization_id = o.id) AS team_count
+                  (SELECT COUNT(*) FROM teams t WHERE t.organization_id = o.id) AS team_count
            FROM organizations o WHERE o.id = $1"#,
     )
     .bind(id)
@@ -613,7 +613,7 @@ async fn list_teams(
             r#"SELECT t.id, t.organization_id, o.name, t.name, t.slug, t.created_at
                FROM teams t
                JOIN organizations o ON o.id = t.organization_id
-               WHERE t.name ILIKE $1 OR t.slug ILIKE $1 OR o.name ILIKE $1
+               WHERE LOWER(t.name) LIKE LOWER($1) OR LOWER(t.slug) LIKE LOWER($1) OR LOWER(o.name) LIKE LOWER($1)
                ORDER BY t.created_at DESC
                LIMIT $2 OFFSET $3"#,
         )
@@ -823,8 +823,8 @@ async fn list_billing(
                FROM teams t
                JOIN organizations o ON o.id = t.organization_id
                LEFT JOIN team_billing tb ON tb.team_id = t.id
-               WHERE t.name ILIKE $1 OR t.slug ILIKE $1 OR o.name ILIKE $1
-                  OR COALESCE(tb.plan_name,'') ILIKE $1
+               WHERE LOWER(t.name) LIKE LOWER($1) OR LOWER(t.slug) LIKE LOWER($1) OR LOWER(o.name) LIKE LOWER($1)
+                  OR LOWER(COALESCE(tb.plan_name,'')) LIKE LOWER($1)
                ORDER BY COALESCE(tb.updated_at, t.created_at) DESC
                LIMIT $2 OFFSET $3"#,
         )
@@ -889,7 +889,7 @@ async fn patch_admin_billing(
 ) -> Result<Json<AdminBillingRow>, ApiError> {
     let actor = require_platform_admin(&state, &headers).await?;
 
-    let exists: i64 = sqlx::query_scalar("SELECT COUNT(1)::bigint FROM teams WHERE id = $1")
+    let exists: i64 = sqlx::query_scalar("SELECT COUNT(1) FROM teams WHERE id = $1")
         .bind(team_id)
         .fetch_one(&state.pool)
         .await
@@ -1173,7 +1173,7 @@ async fn upsert_team_entitlement(
     }
 
     let exists: i64 = sqlx::query_scalar(
-        "SELECT COUNT(1)::bigint FROM platform_feature_definitions WHERE feature_key = $1",
+        "SELECT COUNT(1) FROM platform_feature_definitions WHERE feature_key = $1",
     )
     .bind(&body.feature_key)
     .fetch_one(&state.pool)
@@ -1183,7 +1183,7 @@ async fn upsert_team_entitlement(
         return Err(ApiError::BadRequest("unknown feature_key".into()));
     }
 
-    let team_ok: i64 = sqlx::query_scalar("SELECT COUNT(1)::bigint FROM teams WHERE id = $1")
+    let team_ok: i64 = sqlx::query_scalar("SELECT COUNT(1) FROM teams WHERE id = $1")
         .bind(team_id)
         .fetch_one(&state.pool)
         .await
@@ -1287,22 +1287,22 @@ async fn analytics_overview(
     let since = Utc::now() - chrono::Duration::days(days);
 
     let total_users: i64 =
-        sqlx::query_scalar("SELECT COUNT(1)::bigint FROM users")
+        sqlx::query_scalar("SELECT COUNT(1) FROM users")
             .fetch_one(&state.pool)
             .await
             .map_err(|_| ApiError::Internal)?;
     let total_organizations: i64 =
-        sqlx::query_scalar("SELECT COUNT(1)::bigint FROM organizations")
+        sqlx::query_scalar("SELECT COUNT(1) FROM organizations")
             .fetch_one(&state.pool)
             .await
             .map_err(|_| ApiError::Internal)?;
-    let total_teams: i64 = sqlx::query_scalar("SELECT COUNT(1)::bigint FROM teams")
+    let total_teams: i64 = sqlx::query_scalar("SELECT COUNT(1) FROM teams")
         .fetch_one(&state.pool)
         .await
         .map_err(|_| ApiError::Internal)?;
 
     let user_signups_by_day: Vec<(NaiveDate, i64)> = sqlx::query_as(
-        r#"SELECT (created_at AT TIME ZONE 'UTC')::date AS d, COUNT(*)::bigint
+        r#"SELECT date(created_at) AS d, COUNT(*) AS c
            FROM users WHERE created_at >= $1
            GROUP BY 1 ORDER BY 1"#,
     )
@@ -1312,7 +1312,7 @@ async fn analytics_overview(
     .map_err(|_| ApiError::Internal)?;
 
     let teams_created_by_day: Vec<(NaiveDate, i64)> = sqlx::query_as(
-        r#"SELECT (created_at AT TIME ZONE 'UTC')::date AS d, COUNT(*)::bigint
+        r#"SELECT date(created_at) AS d, COUNT(*) AS c
            FROM teams WHERE created_at >= $1
            GROUP BY 1 ORDER BY 1"#,
     )
@@ -1322,7 +1322,7 @@ async fn analytics_overview(
     .map_err(|_| ApiError::Internal)?;
 
     let deploy_jobs_by_day: Vec<(NaiveDate, String, i64)> = sqlx::query_as(
-        r#"SELECT (dj.created_at AT TIME ZONE 'UTC')::date AS d, dj.status::text, COUNT(*)::bigint
+        r#"SELECT date(dj.created_at) AS d, dj.status AS status, COUNT(*) AS c
            FROM deploy_jobs dj
            WHERE dj.created_at >= $1
            GROUP BY 1, 2 ORDER BY 1, 2"#,
@@ -1333,7 +1333,7 @@ async fn analytics_overview(
     .map_err(|_| ApiError::Internal)?;
 
     let rum_events_by_day: Vec<(NaiveDate, i64)> = sqlx::query_as(
-        r#"SELECT (recorded_at AT TIME ZONE 'UTC')::date AS d, COUNT(*)::bigint
+        r#"SELECT date(recorded_at) AS d, COUNT(*) AS c
            FROM rum_events WHERE recorded_at >= $1
            GROUP BY 1 ORDER BY 1"#,
     )
@@ -1343,7 +1343,7 @@ async fn analytics_overview(
     .map_err(|_| ApiError::Internal)?;
 
     let billing_by_plan: Vec<(String, String, i64)> = sqlx::query_as(
-        r#"SELECT plan_name, status, COUNT(*)::bigint FROM team_billing GROUP BY 1, 2 ORDER BY 1, 2"#,
+        r#"SELECT plan_name, status, COUNT(*) AS c FROM team_billing GROUP BY 1, 2 ORDER BY 1, 2"#,
     )
     .fetch_all(&state.pool)
     .await
@@ -1370,7 +1370,7 @@ async fn admin_system(
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let _actor = require_platform_admin(&state, &headers).await?;
 
-    let db_ok = sqlx::query_scalar::<_, i64>("SELECT 1::bigint")
+    let db_ok = sqlx::query_scalar::<_, i64>("SELECT 1")
         .fetch_one(&state.pool)
         .await
         .is_ok();
@@ -1493,7 +1493,7 @@ async fn list_audit_log(
             sqlx::query_as(
                 r#"SELECT id, actor_user_id, action, entity_type, entity_id, metadata, created_at
                    FROM admin_audit_log
-                   WHERE action ILIKE $1 OR entity_type ILIKE $1
+                   WHERE LOWER(action) LIKE LOWER($1) OR LOWER(entity_type) LIKE LOWER($1)
                    ORDER BY created_at DESC
                    LIMIT $2 OFFSET $3"#,
             )
