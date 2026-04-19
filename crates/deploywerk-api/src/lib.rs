@@ -114,6 +114,8 @@ pub async fn run() -> anyhow::Result<()> {
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(5);
+
+    #[cfg(feature = "postgres")]
     let statement_timeout_ms: Option<i64> = std::env::var("DATABASE_STATEMENT_TIMEOUT_MS")
         .ok()
         .and_then(|s| s.parse().ok())
